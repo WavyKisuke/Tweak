@@ -111,9 +111,32 @@ static void PTControllerPlay(id self,SEL sel){
     if(gPrivateTikTokMuted)PTApplyCurrent();else PTRestoreCurrent();
 }
 
+/* The For You feed uses TikTok's own wrapper around AVPlayer. These hooks are
+ * deliberately installed by class/selector discovery so a missing selector
+ * on a future TikTok build is harmless. */
+static void PTWrapperPlay(id self,SEL sel){
+    gCurrentPlayer=self;
+    IMP o=PTOriginalForSelf(self,sel);if(o)((void(*)(id,SEL))o)(self,sel);
+    TikTokPlusInstallMuteButton();
+    if(gPrivateTikTokMuted)PTApplyCurrent();else PTRestoreCurrent();
+}
+
+static void InstallWrapperHooks(Class cls){
+    if(!cls)return;
+    PTInstall(cls,@selector(play),(IMP)PTWrapperPlay);
+    NSArray*b=@[@"setMuted:",@"setAudioMuted:",@"setEnableSoundOutput:"];
+    for(NSString*n in b){SEL s=NSSelectorFromString(n);PTInstall(cls,s,(IMP)PTSetBool);}
+    NSArray*f=@[@"setVolume:",@"setAudioVolume:",@"setPlayerVolume:"];
+    for(NSString*n in f){SEL s=NSSelectorFromString(n);Method m=class_getInstanceMethod(cls,s);if(!m)continue;const char*t=method_getTypeEncoding(m);IMP r=(t&&strchr(t,'d'))?(IMP)PTSetDouble:(IMP)PTSetFloat;PTInstall(cls,s,r);}
+}
+
 static void InstallPrivateHooks(void){
     Class controller=NSClassFromString(@"AWEPlayVideoPlayerController");
     Class cell=NSClassFromString(@"AWEFeedCellViewController");
+    Class wrapper=NSClassFromString(@"AWEAVPlayerWrapper");
+    Class display=NSClassFromString(@"AWEAwemeDisplayPlayerController");
+    InstallWrapperHooks(wrapper);
+    InstallWrapperHooks(display);
     if(controller||cell){
         PTInstall(controller,@selector(playerWillLoopPlaying:),(IMP)PTPlayerLoop);
         PTInstall(controller,@selector(play),(IMP)PTControllerPlay);
@@ -137,21 +160,21 @@ static void InstallPrivateHooks(void){
         Method vm=class_getInstanceMethod(mlk,@selector(setVolume:));
         if(vm){const char*t=method_getTypeEncoding(vm);IMP replacement=(t&&strchr(t,'d'))?(IMP)PTSetDouble:(IMP)PTSetFloat;PTInstall(mlk,@selector(setVolume:),replacement);}
     }
-    Class core=NSClassFromString(@"AudioPlayerCore");
-    if(!core)core=NSClassFromString(@"MaLiangKit.AudioPlayerCore");
-    (void)core;
 }
 
 static void PTApplyCurrent(void){
     if(!gPrivateTikTokMuted)return;
     PTForceObject(gCurrentPlayer);PTForceObject(gCurrentPlayerController);PTForceObject(gCurrentFeedCell);PTProbeMLK(gCurrentPlayer);
+    PTProbePlayer(gCurrentPlayer);
     if([gCurrentPlayerController respondsToSelector:@selector(player)]){@try{PTProbePlayer(((id(*)(id,SEL))objc_msgSend)(gCurrentPlayerController,@selector(player)));}@catch(__unused NSException*e){}}
     if([gCurrentPlayerController respondsToSelector:@selector(currentPlayer)]){@try{PTProbePlayer(((id(*)(id,SEL))objc_msgSend)(gCurrentPlayerController,@selector(currentPlayer)));}@catch(__unused NSException*e){}}
+    if([gCurrentPlayer respondsToSelector:@selector(player)]){@try{PTProbePlayer(((id(*)(id,SEL))objc_msgSend)(gCurrentPlayer,@selector(player)));}@catch(__unused NSException*e){}}
+    if([gCurrentPlayer respondsToSelector:@selector(avPlayer)]){@try{PTProbePlayer(((id(*)(id,SEL))objc_msgSend)(gCurrentPlayer,@selector(avPlayer)));}@catch(__unused NSException*e){}}
 }
 
 static void PTRestoreCurrent(void){
     if(gPrivateTikTokMuted)return;
-    PTRestoreObject(gCurrentPlayer);PTRestoreObject(gCurrentPlayerController);PTRestoreObject(gCurrentFeedCell);PTProbeMLK(gCurrentPlayer);
+    PTRestoreObject(gCurrentPlayer);PTRestoreObject(gCurrentPlayerController);PTRestoreObject(gCurrentFeedCell);PTProbeMLK(gCurrentPlayer);PTProbePlayer(gCurrentPlayer);
     if([gCurrentPlayerController respondsToSelector:@selector(player)]){@try{PTProbePlayer(((id(*)(id,SEL))objc_msgSend)(gCurrentPlayerController,@selector(player)));}@catch(__unused NSException*e){}}
     if([gCurrentPlayerController respondsToSelector:@selector(currentPlayer)]){@try{PTProbePlayer(((id(*)(id,SEL))objc_msgSend)(gCurrentPlayerController,@selector(currentPlayer)));}@catch(__unused NSException*e){}}
 }
