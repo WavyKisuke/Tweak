@@ -96,19 +96,19 @@ static void InstallMuteButton(void) {
 }
 
 %hook AVPlayer
-- (instancetype)init { AVPlayer *p=%orig(); if(IsTikTokAudio()) TrackPlayer(p); return p; }
+- (instancetype)init { AVPlayer *p=%orig; if(IsTikTokAudio()) TrackPlayer(p); return p; }
 - (instancetype)initWithURL:(NSURL *)u { DebugLog(@"CALL AVPlayer -initWithURL"); AVPlayer *p=%orig(u); if(IsTikTokAudio()) TrackPlayer(p); return p; }
 - (instancetype)initWithPlayerItem:(AVPlayerItem *)i { DebugLog(@"CALL AVPlayer -initWithPlayerItem"); AVPlayer *p=%orig(i); if(IsTikTokAudio()) TrackPlayer(p); return p; }
 - (void)setVolume:(float)v { if(IsTikTokAudio()) { DebugLog(@"CALL AVPlayer setVolume %.3f muted=%d",v,gTikTokMuted); TrackPlayer(self); if(gTikTokMuted)v=0; } %orig(v); }
 - (void)setMuted:(BOOL)m { if(IsTikTokAudio()) { DebugLog(@"CALL AVPlayer setMuted %d global=%d",m,gTikTokMuted); TrackPlayer(self); if(gTikTokMuted)m=YES; } %orig(m); }
-- (void)play { if(IsTikTokAudio()) DebugLog(@"CALL AVPlayer play muted=%d",gTikTokMuted); if(gTikTokMuted){self.muted=YES;self.volume=0;} %orig(); if(gTikTokMuted){self.muted=YES;self.volume=0;} }
+- (void)play { if(IsTikTokAudio()) DebugLog(@"CALL AVPlayer play muted=%d",gTikTokMuted); if(gTikTokMuted){self.muted=YES;self.volume=0;} %orig; if(gTikTokMuted){self.muted=YES;self.volume=0;} }
 - (void)replaceCurrentItemWithPlayerItem:(AVPlayerItem *)i { if(IsTikTokAudio())DebugLog(@"CALL AVPlayer replaceCurrentItem"); %orig(i); if(IsTikTokAudio())TrackPlayer(self); if(gTikTokMuted){self.muted=YES;self.volume=0;} }
 %end
 
 %hook AVQueuePlayer
 + (instancetype)queuePlayerWithItems:(NSArray *)items { DebugLog(@"CALL AVQueuePlayer +queuePlayerWithItems count=%lu",(unsigned long)items.count); AVQueuePlayer *p=%orig(items); if(IsTikTokAudio())TrackPlayer(p); return p; }
 - (instancetype)initWithItems:(NSArray *)items { DebugLog(@"CALL AVQueuePlayer -initWithItems count=%lu",(unsigned long)items.count); AVQueuePlayer *p=%orig(items); if(IsTikTokAudio())TrackPlayer(p); return p; }
-- (void)advanceToNextItem { if(IsTikTokAudio())DebugLog(@"CALL AVQueuePlayer advanceToNextItem"); %orig(); if(gTikTokMuted){self.muted=YES;self.volume=0;} }
+- (void)advanceToNextItem { if(IsTikTokAudio())DebugLog(@"CALL AVQueuePlayer advanceToNextItem"); %orig; if(gTikTokMuted){self.muted=YES;self.volume=0;} }
 %end
 
 %hook AVPlayerItem
@@ -121,32 +121,32 @@ static void InstallMuteButton(void) {
 - (instancetype)initWithContentsOfURL:(NSURL *)u error:(NSError **)e { DebugLog(@"CALL AVAudioPlayer initWithContentsOfURL"); AVAudioPlayer *p=%orig(u,e); if(IsTikTokAudio())TrackAudioPlayer(p); return p; }
 - (instancetype)initWithData:(NSData *)d error:(NSError **)e { DebugLog(@"CALL AVAudioPlayer initWithData"); AVAudioPlayer *p=%orig(d,e); if(IsTikTokAudio())TrackAudioPlayer(p); return p; }
 - (void)setVolume:(float)v { if(IsTikTokAudio()){DebugLog(@"CALL AVAudioPlayer setVolume %.3f",v);TrackAudioPlayer(self);if(gTikTokMuted)v=0;} %orig(v); }
-- (BOOL)play { if(IsTikTokAudio())DebugLog(@"CALL AVAudioPlayer play"); if(gTikTokMuted)self.volume=0; BOOL r=%orig(); if(gTikTokMuted)self.volume=0; return r; }
+- (BOOL)play { if(IsTikTokAudio())DebugLog(@"CALL AVAudioPlayer play"); if(gTikTokMuted)self.volume=0; BOOL r=%orig; if(gTikTokMuted)self.volume=0; return r; }
 %end
 
 %hook AVAudioEngine
-- (instancetype)init { DebugLog(@"CALL AVAudioEngine init"); AVAudioEngine *e=%orig(); if(IsTikTokAudio())TrackEngine(e); return e; }
+- (instancetype)init { DebugLog(@"CALL AVAudioEngine init"); AVAudioEngine *e=%orig; if(IsTikTokAudio())TrackEngine(e); return e; }
 - (BOOL)startAndReturnError:(NSError **)e { if(IsTikTokAudio())DebugLog(@"CALL AVAudioEngine start"); BOOL r=%orig(e); if(gTikTokMuted)self.mainMixerNode.outputVolume=0; return r; }
 %end
 
 %hook AVAudioPlayerNode
-- (instancetype)init { DebugLog(@"CALL AVAudioPlayerNode init"); AVAudioPlayerNode *n=%orig(); if(IsTikTokAudio())TrackPlayerNode(n); return n; }
+- (instancetype)init { DebugLog(@"CALL AVAudioPlayerNode init"); AVAudioPlayerNode *n=%orig; if(IsTikTokAudio())TrackPlayerNode(n); return n; }
 - (void)setVolume:(float)v { if(IsTikTokAudio()){DebugLog(@"CALL AVAudioPlayerNode setVolume %.3f",v);TrackPlayerNode(self);if(gTikTokMuted)v=0;} %orig(v); }
-- (void)play { if(gTikTokMuted)self.volume=0; %orig(); if(gTikTokMuted)self.volume=0; }
+- (void)play { if(gTikTokMuted)self.volume=0; %orig; if(gTikTokMuted)self.volume=0; }
 %end
 
 %hook AVAudioMixerNode
-- (instancetype)init { DebugLog(@"CALL AVAudioMixerNode init"); AVAudioMixerNode *n=%orig(); if(IsTikTokAudio())TrackMixerNode(n); return n; }
+- (instancetype)init { DebugLog(@"CALL AVAudioMixerNode init"); AVAudioMixerNode *n=%orig; if(IsTikTokAudio())TrackMixerNode(n); return n; }
 - (void)setOutputVolume:(float)v { if(IsTikTokAudio()){DebugLog(@"CALL AVAudioMixerNode setOutputVolume %.3f",v);TrackMixerNode(self);if(gTikTokMuted)v=0;} %orig(v); }
 %end
 
 %hook AVAudioEnvironmentNode
-- (instancetype)init { DebugLog(@"CALL AVAudioEnvironmentNode init"); AVAudioEnvironmentNode *n=%orig(); if(IsTikTokAudio())TrackEnvironmentNode(n); return n; }
+- (instancetype)init { DebugLog(@"CALL AVAudioEnvironmentNode init"); AVAudioEnvironmentNode *n=%orig; if(IsTikTokAudio())TrackEnvironmentNode(n); return n; }
 - (void)setOutputVolume:(float)v { if(IsTikTokAudio()){DebugLog(@"CALL AVAudioEnvironmentNode setOutputVolume %.3f",v);TrackEnvironmentNode(self);if(gTikTokMuted)v=0;} %orig(v); }
 %end
 
 %hook AVSampleBufferAudioRenderer
-- (instancetype)init { DebugLog(@"CALL AVSampleBufferAudioRenderer init"); AVSampleBufferAudioRenderer *r=%orig(); if(IsTikTokAudio())TrackSampleRenderer(r); return r; }
+- (instancetype)init { DebugLog(@"CALL AVSampleBufferAudioRenderer init"); AVSampleBufferAudioRenderer *r=%orig; if(IsTikTokAudio())TrackSampleRenderer(r); return r; }
 - (void)setMuted:(BOOL)m { if(IsTikTokAudio()){DebugLog(@"CALL AVSampleBufferAudioRenderer setMuted %d",m);TrackSampleRenderer(self);if(gTikTokMuted)m=YES;} %orig(m); }
 - (void)setVolume:(float)v { if(IsTikTokAudio()){DebugLog(@"CALL AVSampleBufferAudioRenderer setVolume %.3f",v);TrackSampleRenderer(self);if(gTikTokMuted)v=0;} %orig(v); }
 %end
