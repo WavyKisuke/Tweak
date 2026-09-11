@@ -26,14 +26,12 @@ static UIWindow *AudioTopWindow(void) {
     return nil;
 }
 
+// Tracking must never change the player's volume itself.  Doing that from
+// setVolume:/setMuted: would re-enter our hooks recursively.
 static void TrackPlayer(AVPlayer *player) {
     if (!player || !gTrackedPlayers) return;
     @synchronized (gTrackedPlayers) {
         [gTrackedPlayers addObject:player];
-        if (gTikTokMuted) {
-            player.muted = YES;
-            [player setVolume:0.0f];
-        }
     }
 }
 
@@ -149,8 +147,6 @@ static void InstallMuteButton(void) {
         InstallMuteButton();
     });
 
-    // TikTok can recreate players or restore their volume while scrolling.
-    // Re-apply the user's mute choice periodically while the tweak is loaded.
     gMuteTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
     dispatch_source_set_timer(gMuteTimer,
                               dispatch_time(DISPATCH_TIME_NOW, 2 * NSEC_PER_SEC),
