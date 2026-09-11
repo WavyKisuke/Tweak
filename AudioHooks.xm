@@ -12,6 +12,54 @@ static BOOL IsTikTokAudio(void) {
     return [[[NSBundle mainBundle] bundleIdentifier] isEqualToString:@"com.zhiliaoapp.musically"];
 }
 
+// Decide the audio session config that TikTok must end up with so it mixes
+// with the user's music / podcasts instead of interrupting them.
+static void ResolveAudioMixConfig(AVAudioSessionCategory inCat,
+                                  AVAudioSessionCategoryOptions inOpts,
+                                  AVAudioSessionCategory *outCat,
+                                  AVAudioSessionCategoryOptions *outOpts) {
+    AVAudioSessionCategory targetCat = inCat;
+    AVAudioSessionCategoryOptions targetOpts = inOpts | AVAudioSessionCategoryOptionMixWithOthers;
+
+    // Preserve PlayAndRecord / MultiRoute (TikTok needs them for recording and
+    // route-mixing features). For everything else — Ambient, SoloAmbient,
+    // Record, Playback, nil — force Playback so iOS treats TikTok as
+    // background-friendly and mixes it with the other app.
+    if (![targetCat isEqualToString:AVAudioSessionCategoryPlayAndRecord] &&
+        ![targetCat isEqualToString:AVAudioSessionCategoryMultiRoute]) {
+        targetCat = AVAudioSessionCategoryPlayback;
+    }
+
+    if (outCat)  *outCat  = targetCat;
+    if (outOpts) *outOpts = targetOpts;
+}
+
+static void ConfigureAudioMixing(void) {
+    AVAudioSession *s = [AVAudioSession sharedInstance];
+    AVAudioSessionCategory currentCat = s.category;
+    AVAudioSessionCategoryOptions currentOpts = s.categoryOptions;
+
+    AVAudioSessionCategory targetCat;
+    AVAudioSessionCategoryOptions targetOpts;
+    ResolveAudioMixConfig(currentCat, currentOpts, &targetCat, &targetOpts);
+
+    if (![currentCat isEqualToString:targetCat] || currentOpts != targetOpts) {
+        NSError *err = nil;
+        [s setCategory:targetCat mode:s.mode options:targetOpts error:&err];
+
+        // Re-activate so it re-evaluates interruptibility — otherwise the first
+        // activation under the old config keeps the music app paused.
+        if (s.otherAudioPlaying) {
+            NSError *deactErr = nil;
+            [s setActive:NO
+             withOptions:AVAudioSessionSetActivationOptionNotifyOthersOnDeactivation
+                   error:&deactErr];
+            NSError *actErr = nil;
+            [s setActive:YES withOptions:0 error:&actErr];
+        }
+    }
+}
+
 static UIWindow *AudioTopWindow(void) {
     if (@available(iOS 13.0, *)) {
         for (UIScene *scene in UIApplication.sharedApplication.connectedScenes) {
@@ -210,12 +258,65 @@ static void InstallMuteButton(void) {
 }
 %end
 
+%hook AVAudioSession
+- (BOOL)setCategory:(AVAudioSessionCategory)category
+               mode:(AVAudioSessionMode)mode
+            options:(AVAudioSessionCategoryOptions)options
+              error:(NSError **)outError {
+    if (IsTikTokAudio()) {
+        ResolveAudioMixConfig(category, options, &category, &options);
+    }
+    return %orig(category, mode, options, outError);
+}
+
+- (BOOL)setCategory:(AVAudioSessionCategory)category
+       withOptions:(AVAudioSessionCategoryOptions)options
+             error:(NSError **)outError {
+    if (IsTikTokAudio()) {
+        ResolveAudioMixConfig(category, options, &category, &options);
+    }
+    return %orig(category, options, outError);
+}
+
+- (BOOL)setCategory:(AVAudioSessionCategory)category
+              error:(NSError **)outError {
+    if (IsTikTokAudio()) {
+        // This overload can't carry options — upgrade by calling the
+        // option-taking overload. ResolveAudioMixConfig is idempotent so the
+        // recursive call doesn't loop.
+        NSError *innerErr = nil;
+        BOOL ok = [self setCategory:AVAudioSessionCategoryPlayback
+                               mode:AVAudioSessionModeDefault
+                            options:AVAudioSessionCategoryOptionMixWithOthers
+                              error:&innerErr];
+        if (outError) *outError = innerErr;
+        return ok;
+    }
+    return %orig(category, outError);
+}
+
+- (BOOL)setActive:(BOOL)active
+      withOptions:(AVAudioSessionSetActivationOptions)options
+            error:(NSError **)outError {
+    if (IsTikTokAudio() && !active) {
+        // Be polite when TikTok stops using the audio device — let the music
+        // app resume cleanly instead of leaving it paused.
+        options |= AVAudioSessionSetActivationOptionNotifyOthersOnDeactivation;
+    }
+    return %orig(active, options, outError);
+}
+%end
+
 %ctor {
     if (!IsTikTokAudio()) return;
 
     gTrackedPlayers = [NSHashTable weakObjectsHashTable];
     gTrackedAudioPlayers = [NSHashTable weakObjectsHashTable];
     gTrackedEngines = [NSHashTable weakObjectsHashTable];
+
+    // Apply MixWithOthers immediately so we beat TikTok's first audio-session
+    // activation; otherwise iOS sees the wrong config and pauses the music app.
+    ConfigureAudioMixing();
 
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         InstallMuteButton();
@@ -227,6 +328,7 @@ static void InstallMuteButton(void) {
                               750 * NSEC_PER_MSEC,
                               100 * NSEC_PER_MSEC);
     dispatch_source_set_event_handler(gMuteTimer, ^{
+        ConfigureAudioMixing();
         InstallMuteButton();
         if (gTikTokMuted) ApplyMuteState();
     });
