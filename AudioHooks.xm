@@ -14,12 +14,16 @@ static BOOL IsTikTok(void) {
 
 static UIWindow *TopWindow(void) {
     if (@available(iOS 13.0, *)) {
+        UIWindow *fallback = nil;
         for (UIScene *scene in UIApplication.sharedApplication.connectedScenes) {
             if (![scene isKindOfClass:[UIWindowScene class]] || scene.activationState != UISceneActivationStateForegroundActive) continue;
             for (UIWindow *window in ((UIWindowScene *)scene).windows) {
-                if (!window.hidden && window.alpha > 0.01 && window.windowLevel == UIWindowLevelNormal && window.rootViewController && window.isKeyWindow) return window;
+                if (window.hidden || window.alpha <= 0.01 || window.windowLevel != UIWindowLevelNormal || !window.rootViewController) continue;
+                if (!fallback) fallback = window;
+                if (window.isKeyWindow) return window;
             }
         }
+        return fallback;
     }
     return nil;
 }
@@ -44,7 +48,7 @@ void TikTokPlusSetMuted(BOOL muted) {
         [gMuteButton setTitle:gTikTokMuted ? @"UNMUTE" : @"MUTE" forState:UIControlStateNormal];
     });
     ApplyMuteState();
-    [[NSNotificationCenter defaultCenter] postNotificationName:@"TikTokPlusMuteChanged" object:nil userInfo:@{ @"muted": @(muted) }];
+    [[NSNotificationCenter defaultCenter] postNotificationName:@"TikTokPlusMuteChanged" object:nil userInfo:@{@"muted":@(muted)}];
 }
 
 @interface TTKPlusAudioTarget : NSObject
@@ -58,18 +62,25 @@ static void InstallMuteButton(void) {
         UIWindow *window = TopWindow();
         if (!window) return;
         if (!gAudioTarget) gAudioTarget = [TTKPlusAudioTarget new];
-        if (gMuteButton.superview == window) { [window bringSubviewToFront:gMuteButton]; return; }
+        if (gMuteButton.superview == window) {
+            gMuteButton.hidden = NO;
+            gMuteButton.alpha = 1.0;
+            [window bringSubviewToFront:gMuteButton];
+            return;
+        }
         [gMuteButton removeFromSuperview];
         UIButton *button = [UIButton buttonWithType:UIButtonTypeSystem];
-        button.frame = CGRectMake(window.bounds.size.width - 102, 60, 88, 38);
+        button.frame = CGRectMake(MAX(8.0, window.bounds.size.width - 110.0), 60.0, 96.0, 42.0);
         button.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
-        button.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.68];
+        button.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.82];
         button.layer.cornerRadius = 10.0;
+        button.layer.zPosition = 10000.0;
         [button setTitle:gTikTokMuted ? @"UNMUTE" : @"MUTE" forState:UIControlStateNormal];
         [button setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
         button.titleLabel.font = [UIFont boldSystemFontOfSize:14.0];
         [button addTarget:gAudioTarget action:@selector(tapMute:) forControlEvents:UIControlEventTouchUpInside];
         [window addSubview:button];
+        [window bringSubviewToFront:button];
         gMuteButton = button;
     });
 }
@@ -96,66 +107,18 @@ static void HookMethod(Class cls, SEL sel, IMP replacement, IMP *original) {
     method_setImplementation(m, replacement);
 }
 
-static void TTK_AVPlayerPlay(id self, SEL _cmd) {
-    [gPlayers addObject:self];
-    if (gTikTokMuted) ForceMuteObject(self);
-    if (gAVPlayerPlay) ((void(*)(id,SEL))gAVPlayerPlay)(self,_cmd);
-    if (gTikTokMuted) ForceMuteObject(self);
-}
-static void TTK_AVPlayerSetMuted(id self, SEL _cmd, BOOL muted) {
-    if (gTikTokMuted) muted = YES;
-    if (gAVPlayerSetMuted) ((void(*)(id,SEL,BOOL))gAVPlayerSetMuted)(self,_cmd,muted);
-}
-static void TTK_AVPlayerSetVolume(id self, SEL _cmd, float volume) {
-    if (gTikTokMuted) volume = 0.0f;
-    if (gAVPlayerSetVolume) ((void(*)(id,SEL,float))gAVPlayerSetVolume)(self,_cmd,volume);
-}
-static void TTK_AVAudioPlayerPlay(id self, SEL _cmd) {
-    [gAudioObjects addObject:self];
-    if (gTikTokMuted) ForceMuteObject(self);
-    if (gAVAudioPlayerPlay) ((void(*)(id,SEL))gAVAudioPlayerPlay)(self,_cmd);
-    if (gTikTokMuted) ForceMuteObject(self);
-}
-static void TTK_AVAudioPlayerSetVolume(id self, SEL _cmd, float volume) {
-    if (gTikTokMuted) volume = 0.0f;
-    if (gAVAudioPlayerSetVolume) ((void(*)(id,SEL,float))gAVAudioPlayerSetVolume)(self,_cmd,volume);
-}
-static void TTK_AVAudioPlayerNodePlay(id self, SEL _cmd) {
-    [gAudioObjects addObject:self];
-    if (gTikTokMuted) ForceMuteObject(self);
-    if (gAVAudioPlayerNodePlay) ((void(*)(id,SEL))gAVAudioPlayerNodePlay)(self,_cmd);
-    if (gTikTokMuted) ForceMuteObject(self);
-}
-static void TTK_AVAudioMixerSetOutputVolume(id self, SEL _cmd, float volume) {
-    if (gTikTokMuted) volume = 0.0f;
-    if (gAVAudioMixerSetOutputVolume) ((void(*)(id,SEL,float))gAVAudioMixerSetOutputVolume)(self,_cmd,volume);
-}
-static void TTK_AVAudioEnvironmentSetOutputVolume(id self, SEL _cmd, float volume) {
-    if (gTikTokMuted) volume = 0.0f;
-    if (gAVAudioEnvironmentSetOutputVolume) ((void(*)(id,SEL,float))gAVAudioEnvironmentSetOutputVolume)(self,_cmd,volume);
-}
-static void TTK_AVSamplePlay(id self, SEL _cmd) {
-    [gAudioObjects addObject:self];
-    if (gTikTokMuted) ForceMuteObject(self);
-    if (gAVSamplePlay) ((void(*)(id,SEL))gAVSamplePlay)(self,_cmd);
-    if (gTikTokMuted) ForceMuteObject(self);
-}
-static void TTK_AVSampleSetMuted(id self, SEL _cmd, BOOL muted) {
-    if (gTikTokMuted) muted = YES;
-    if (gAVSampleSetMuted) ((void(*)(id,SEL,BOOL))gAVSampleSetMuted)(self,_cmd,muted);
-}
-static void TTK_AVSampleSetVolume(id self, SEL _cmd, float volume) {
-    if (gTikTokMuted) volume = 0.0f;
-    if (gAVSampleSetVolume) ((void(*)(id,SEL,float))gAVSampleSetVolume)(self,_cmd,volume);
-}
-static BOOL TTK_AVAudioEngineStart(id self, SEL _cmd, NSError **error) {
-    BOOL result = gAVAudioEngineStart ? ((BOOL(*)(id,SEL,NSError**))gAVAudioEngineStart)(self,_cmd,error) : NO;
-    if (gTikTokMuted && [self respondsToSelector:@selector(mainMixerNode)]) {
-        id mixer = [self mainMixerNode];
-        if ([mixer respondsToSelector:@selector(setOutputVolume:)]) [mixer setOutputVolume:0.0f];
-    }
-    return result;
-}
+static void TTK_AVPlayerPlay(id self, SEL _cmd) { [gPlayers addObject:self]; if (gTikTokMuted) ForceMuteObject(self); if (gAVPlayerPlay) ((void(*)(id,SEL))gAVPlayerPlay)(self,_cmd); if (gTikTokMuted) ForceMuteObject(self); }
+static void TTK_AVPlayerSetMuted(id self, SEL _cmd, BOOL muted) { if (gTikTokMuted) muted = YES; if (gAVPlayerSetMuted) ((void(*)(id,SEL,BOOL))gAVPlayerSetMuted)(self,_cmd,muted); }
+static void TTK_AVPlayerSetVolume(id self, SEL _cmd, float volume) { if (gTikTokMuted) volume = 0.0f; if (gAVPlayerSetVolume) ((void(*)(id,SEL,float))gAVPlayerSetVolume)(self,_cmd,volume); }
+static void TTK_AVAudioPlayerPlay(id self, SEL _cmd) { [gAudioObjects addObject:self]; if (gTikTokMuted) ForceMuteObject(self); if (gAVAudioPlayerPlay) ((void(*)(id,SEL))gAVAudioPlayerPlay)(self,_cmd); if (gTikTokMuted) ForceMuteObject(self); }
+static void TTK_AVAudioPlayerSetVolume(id self, SEL _cmd, float volume) { if (gTikTokMuted) volume = 0.0f; if (gAVAudioPlayerSetVolume) ((void(*)(id,SEL,float))gAVAudioPlayerSetVolume)(self,_cmd,volume); }
+static void TTK_AVAudioPlayerNodePlay(id self, SEL _cmd) { [gAudioObjects addObject:self]; if (gTikTokMuted) ForceMuteObject(self); if (gAVAudioPlayerNodePlay) ((void(*)(id,SEL))gAVAudioPlayerNodePlay)(self,_cmd); if (gTikTokMuted) ForceMuteObject(self); }
+static void TTK_AVAudioMixerSetOutputVolume(id self, SEL _cmd, float volume) { if (gTikTokMuted) volume = 0.0f; if (gAVAudioMixerSetOutputVolume) ((void(*)(id,SEL,float))gAVAudioMixerSetOutputVolume)(self,_cmd,volume); }
+static void TTK_AVAudioEnvironmentSetOutputVolume(id self, SEL _cmd, float volume) { if (gTikTokMuted) volume = 0.0f; if (gAVAudioEnvironmentSetOutputVolume) ((void(*)(id,SEL,float))gAVAudioEnvironmentSetOutputVolume)(self,_cmd,volume); }
+static void TTK_AVSamplePlay(id self, SEL _cmd) { [gAudioObjects addObject:self]; if (gTikTokMuted) ForceMuteObject(self); if (gAVSamplePlay) ((void(*)(id,SEL))gAVSamplePlay)(self,_cmd); if (gTikTokMuted) ForceMuteObject(self); }
+static void TTK_AVSampleSetMuted(id self, SEL _cmd, BOOL muted) { if (gTikTokMuted) muted = YES; if (gAVSampleSetMuted) ((void(*)(id,SEL,BOOL))gAVSampleSetMuted)(self,_cmd,muted); }
+static void TTK_AVSampleSetVolume(id self, SEL _cmd, float volume) { if (gTikTokMuted) volume = 0.0f; if (gAVSampleSetVolume) ((void(*)(id,SEL,float))gAVSampleSetVolume)(self,_cmd,volume); }
+static BOOL TTK_AVAudioEngineStart(id self, SEL _cmd, NSError **error) { BOOL result = gAVAudioEngineStart ? ((BOOL(*)(id,SEL,NSError**))gAVAudioEngineStart)(self,_cmd,error) : NO; if (gTikTokMuted && [self respondsToSelector:@selector(mainMixerNode)]) { id mixer = [self mainMixerNode]; if ([mixer respondsToSelector:@selector(setOutputVolume:)]) [mixer setOutputVolume:0.0f]; } return result; }
 
 static void InstallAVHooks(void) {
     HookMethod(NSClassFromString(@"AVPlayer"), @selector(play), (IMP)TTK_AVPlayerPlay, &gAVPlayerPlay);
