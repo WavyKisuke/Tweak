@@ -71,6 +71,11 @@ static void InstallMuteButton(void) {
     });
 }
 
+void TikTokPlusInstallMuteButton(void) {
+    if (!IsTikTok()) return;
+    InstallMuteButton();
+}
+
 %hook AVPlayer
 - (void)play {
     if (IsTikTok() && gTikTokMuted) {
