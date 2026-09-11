@@ -28,7 +28,6 @@ static id PTObject(id obj, SEL sel) {
 
 static void PTMuteObject(id obj) {
     if (!obj) return;
-
     PTSetBool(obj, @selector(setMuted:), gPrivateTikTokMuted);
     PTSetBool(obj, @selector(setMute:), gPrivateTikTokMuted);
     PTSetBool(obj, @selector(setAudioMuted:), gPrivateTikTokMuted);
@@ -49,7 +48,6 @@ static void PTScanObject(id root, NSInteger depth) {
 
     Class cls = object_getClass(root);
     if (!cls) return;
-
     unsigned int count = 0;
     Ivar *ivars = class_copyIvarList(cls, &count);
     for (unsigned int i = 0; i < count; i++) {
@@ -70,19 +68,38 @@ static void PTScanObject(id root, NSInteger depth) {
     free(ivars);
 }
 
-static void PTApplyToCurrentTikTokPlayers(void) {
-    if (!PTIsTikTok()) return;
-    Class controllerClass = NSClassFromString(@"AWEPlayVideoPlayerController");
-    if (controllerClass) {
-        // Existing controller instances are reached again through the feed lifecycle hooks.
-        // The notification also causes newly-created players to be handled on their next play.
+static void PTApplyToPlayerArgument(id player) {
+    if (!player) return;
+    PTMuteObject(player);
+    PTScanObject(player, 0);
+}
+
+%hook TTKPlusAudioTarget
+- (void)tapMute:(id)sender {
+    // AudioHooks owns the master mute state. Do not toggle a second time here.
+    %orig;
+
+    // The standalone MUTE control changes its title before calling this method.
+    if ([sender isKindOfClass:[UIButton class]]) {
+        NSString *title = [(UIButton *)sender titleForState:UIControlStateNormal];
+        gPrivateTikTokMuted = [title isEqualToString:@"UNMUTE"];
+    }
+
+    if (PTIsTikTok() && gPrivateTikTokMuted) {
+        for (UIWindowScene *scene in UIApplication.sharedApplication.connectedScenes) {
+            if (scene.activationState != UISceneActivationStateForegroundActive) continue;
+            for (UIWindow *window in scene.windows) {
+                if (!window.hidden && window.rootViewController) PTScanObject(window.rootViewController, 0);
+            }
+        }
     }
 }
+%end
 
 %hook AWEPlayVideoPlayerController
 - (void)playerWillLoopPlaying:(id)player {
     %orig;
-    if (PTIsTikTok()) PTScanObject(player, 0);
+    if (PTIsTikTok()) PTApplyToPlayerArgument(player);
 }
 
 - (void)play {
@@ -127,22 +144,6 @@ static void PTApplyToCurrentTikTokPlayers(void) {
 %ctor {
     if (!PTIsTikTok()) return;
     dispatch_async(dispatch_get_main_queue(), ^{
-        [[NSNotificationCenter defaultCenter] addObserverForName:@"TikTokPlusMuteStateChanged"
-                                                          object:nil
-                                                           queue:[NSOperationQueue mainQueue]
-                                                      usingBlock:^(NSNotification *note) {
-            NSNumber *value = note.userInfo[@"muted"];
-            gPrivateTikTokMuted = value.boolValue;
-
-            if (gPrivateTikTokMuted) {
-                // Apply immediately to any controller objects reachable from the current UI.
-                for (UIWindowScene *scene in UIApplication.sharedApplication.connectedScenes) {
-                    if (scene.activationState != UISceneActivationStateForegroundActive) continue;
-                    for (UIWindow *window in scene.windows) {
-                        if (!window.hidden && window.rootViewController) PTScanObject(window.rootViewController, 0);
-                    }
-                }
-            }
-        }];
+        NSLog(@"[TikTokPlus] private audio bridge loaded");
     });
 }
