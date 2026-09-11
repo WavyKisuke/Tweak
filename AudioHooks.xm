@@ -6,50 +6,12 @@ static UIButton *gMuteButton = nil;
 static NSHashTable<AVPlayer *> *gTrackedPlayers = nil;
 static NSHashTable<AVAudioPlayer *> *gTrackedAudioPlayers = nil;
 static NSHashTable<AVAudioEngine *> *gTrackedEngines = nil;
+static NSHashTable<AVAudioPlayerNode *> *gTrackedPlayerNodes = nil;
+static NSHashTable<AVAudioMixerNode *> *gTrackedMixerNodes = nil;
 static dispatch_source_t gMuteTimer = nil;
 
 static BOOL IsTikTokAudio(void) {
     return [[[NSBundle mainBundle] bundleIdentifier] isEqualToString:@"com.zhiliaoapp.musically"];
-}
-
-// Decide the audio session config that TikTok must end up with so it mixes
-// with the user's music / podcasts instead of interrupting them.
-static void ResolveAudioMixConfig(AVAudioSessionCategory inCat,
-                                  AVAudioSessionCategoryOptions inOpts,
-                                  AVAudioSessionCategory *outCat,
-                                  AVAudioSessionCategoryOptions *outOpts) {
-    AVAudioSessionCategory targetCat = inCat;
-    AVAudioSessionCategoryOptions targetOpts = inOpts | AVAudioSessionCategoryOptionMixWithOthers;
-
-    // Preserve PlayAndRecord / MultiRoute (TikTok needs them for recording and
-    // route-mixing features). For everything else — Ambient, SoloAmbient,
-    // Record, Playback, nil — force Playback so iOS treats TikTok as
-    // background-friendly and mixes it with the other app.
-    if (![targetCat isEqualToString:AVAudioSessionCategoryPlayAndRecord] &&
-        ![targetCat isEqualToString:AVAudioSessionCategoryMultiRoute]) {
-        targetCat = AVAudioSessionCategoryPlayback;
-    }
-
-    if (outCat)  *outCat  = targetCat;
-    if (outOpts) *outOpts = targetOpts;
-}
-
-static void ConfigureAudioMixing(void) {
-    AVAudioSession *s = [AVAudioSession sharedInstance];
-    AVAudioSessionCategory currentCat = s.category;
-    AVAudioSessionCategoryOptions currentOpts = s.categoryOptions;
-
-    AVAudioSessionCategory targetCat;
-    AVAudioSessionCategoryOptions targetOpts;
-    ResolveAudioMixConfig(currentCat, currentOpts, &targetCat, &targetOpts);
-
-    if (![currentCat isEqualToString:targetCat] || currentOpts != targetOpts) {
-        NSError *err = nil;
-        [s setCategory:targetCat mode:s.mode options:targetOpts error:&err];
-        // No deactivate/reactivate here: forcing the session state every tick
-        // hijacks the audio focus and makes iOS fight other apps. iOS honours
-        // the new MixWithOthers option on the next natural activation.
-    }
 }
 
 static UIWindow *AudioTopWindow(void) {
@@ -83,13 +45,23 @@ static void TrackEngine(AVAudioEngine *engine) {
     @synchronized (gTrackedEngines) { [gTrackedEngines addObject:engine]; }
 }
 
+static void TrackPlayerNode(AVAudioPlayerNode *node) {
+    if (!node || !gTrackedPlayerNodes) return;
+    @synchronized (gTrackedPlayerNodes) { [gTrackedPlayerNodes addObject:node]; }
+}
+
+static void TrackMixerNode(AVAudioMixerNode *node) {
+    if (!node || !gTrackedMixerNodes) return;
+    @synchronized (gTrackedMixerNodes) { [gTrackedMixerNodes addObject:node]; }
+}
+
 static void ApplyMuteState(void) {
     if (gTrackedPlayers) {
         @synchronized (gTrackedPlayers) {
             for (AVPlayer *player in gTrackedPlayers.allObjects) {
                 if (![player isKindOfClass:[AVPlayer class]]) continue;
                 player.muted = gTikTokMuted;
-                [player setVolume:gTikTokMuted ? 0.0f : 1.0f];
+                if (gTikTokMuted) player.volume = 0.0f;
             }
         }
     }
@@ -98,7 +70,7 @@ static void ApplyMuteState(void) {
         @synchronized (gTrackedAudioPlayers) {
             for (AVAudioPlayer *player in gTrackedAudioPlayers.allObjects) {
                 if (![player isKindOfClass:[AVAudioPlayer class]]) continue;
-                player.volume = gTikTokMuted ? 0.0f : 1.0f;
+                if (gTikTokMuted) player.volume = 0.0f;
             }
         }
     }
@@ -108,6 +80,24 @@ static void ApplyMuteState(void) {
             for (AVAudioEngine *engine in gTrackedEngines.allObjects) {
                 if (![engine isKindOfClass:[AVAudioEngine class]]) continue;
                 engine.mainMixerNode.outputVolume = gTikTokMuted ? 0.0f : 1.0f;
+            }
+        }
+    }
+
+    if (gTrackedPlayerNodes) {
+        @synchronized (gTrackedPlayerNodes) {
+            for (AVAudioPlayerNode *node in gTrackedPlayerNodes.allObjects) {
+                if (![node isKindOfClass:[AVAudioPlayerNode class]]) continue;
+                node.volume = gTikTokMuted ? 0.0f : 1.0f;
+            }
+        }
+    }
+
+    if (gTrackedMixerNodes) {
+        @synchronized (gTrackedMixerNodes) {
+            for (AVAudioMixerNode *node in gTrackedMixerNodes.allObjects) {
+                if (![node isKindOfClass:[AVAudioMixerNode class]]) continue;
+                node.outputVolume = gTikTokMuted ? 0.0f : 1.0f;
             }
         }
     }
@@ -250,52 +240,41 @@ static void InstallMuteButton(void) {
 }
 %end
 
-%hook AVAudioSession
-- (BOOL)setCategory:(AVAudioSessionCategory)category
-               mode:(AVAudioSessionMode)mode
-            options:(AVAudioSessionCategoryOptions)options
-              error:(NSError **)outError {
-    if (IsTikTokAudio()) {
-        ResolveAudioMixConfig(category, options, &category, &options);
-    }
-    return %orig(category, mode, options, outError);
+%hook AVAudioPlayerNode
+- (instancetype)init {
+    AVAudioPlayerNode *node = %orig;
+    if (IsTikTokAudio()) TrackPlayerNode(node);
+    return node;
 }
 
-- (BOOL)setCategory:(AVAudioSessionCategory)category
-       withOptions:(AVAudioSessionCategoryOptions)options
-             error:(NSError **)outError {
+- (void)setVolume:(float)volume {
     if (IsTikTokAudio()) {
-        ResolveAudioMixConfig(category, options, &category, &options);
+        TrackPlayerNode(self);
+        if (gTikTokMuted) volume = 0.0f;
     }
-    return %orig(category, options, outError);
+    %orig(volume);
 }
 
-- (BOOL)setCategory:(AVAudioSessionCategory)category
-              error:(NSError **)outError {
-    if (IsTikTokAudio()) {
-        // This overload can't carry options — upgrade by calling the
-        // option-taking overload. ResolveAudioMixConfig is idempotent so the
-        // recursive call doesn't loop.
-        NSError *innerErr = nil;
-        BOOL ok = [self setCategory:AVAudioSessionCategoryPlayback
-                               mode:AVAudioSessionModeDefault
-                            options:AVAudioSessionCategoryOptionMixWithOthers
-                              error:&innerErr];
-        if (outError) *outError = innerErr;
-        return ok;
-    }
-    return %orig(category, outError);
+- (void)play {
+    if (IsTikTokAudio() && gTikTokMuted) self.volume = 0.0f;
+    %orig;
+    if (IsTikTokAudio() && gTikTokMuted) self.volume = 0.0f;
+}
+%end
+
+%hook AVAudioMixerNode
+- (instancetype)init {
+    AVAudioMixerNode *node = %orig;
+    if (IsTikTokAudio()) TrackMixerNode(node);
+    return node;
 }
 
-- (BOOL)setActive:(BOOL)active
-      withOptions:(AVAudioSessionSetActivationOptions)options
-            error:(NSError **)outError {
-    if (IsTikTokAudio() && !active) {
-        // Be polite when TikTok stops using the audio device — let the music
-        // app resume cleanly instead of leaving it paused.
-        options |= AVAudioSessionSetActivationOptionNotifyOthersOnDeactivation;
+- (void)setOutputVolume:(float)volume {
+    if (IsTikTokAudio()) {
+        TrackMixerNode(self);
+        if (gTikTokMuted) volume = 0.0f;
     }
-    return %orig(active, options, outError);
+    %orig(volume);
 }
 %end
 
@@ -305,12 +284,8 @@ static void InstallMuteButton(void) {
     gTrackedPlayers = [NSHashTable weakObjectsHashTable];
     gTrackedAudioPlayers = [NSHashTable weakObjectsHashTable];
     gTrackedEngines = [NSHashTable weakObjectsHashTable];
-
-    // Defer one runloop tick so TikTok has a chance to set up its session
-    // first; then we adjust it (if needed) before TikTok's first activation.
-    dispatch_async(dispatch_get_main_queue(), ^{
-        ConfigureAudioMixing();
-    });
+    gTrackedPlayerNodes = [NSHashTable weakObjectsHashTable];
+    gTrackedMixerNodes = [NSHashTable weakObjectsHashTable];
 
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         InstallMuteButton();
@@ -322,9 +297,9 @@ static void InstallMuteButton(void) {
                               750 * NSEC_PER_MSEC,
                               100 * NSEC_PER_MSEC);
     dispatch_source_set_event_handler(gMuteTimer, ^{
-        ConfigureAudioMixing();
         InstallMuteButton();
         if (gTikTokMuted) ApplyMuteState();
     });
     dispatch_resume(gMuteTimer);
 }
+%end
