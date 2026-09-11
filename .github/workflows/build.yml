@@ -1,0 +1,51 @@
+name: Build TikTokAudioMix tweak
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Theos
+        shell: bash
+        run: |
+          set -euo pipefail
+          export THEOS="$HOME/theos"
+          echo "THEOS=$THEOS" >> "$GITHUB_ENV"
+          echo "$THEOS/bin" >> "$GITHUB_PATH"
+          echo "$THEOS/toolchain/linux/iphone/bin" >> "$GITHUB_PATH"
+          if [ ! -x "$THEOS/bin/make" ]; then
+            bash -c "$(curl -fsSL https://raw.githubusercontent.com/theos/theos/master/bin/install-theos)"
+          fi
+
+      - name: Build tweak
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x build.sh
+          ./build.sh
+
+      - name: Verify artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s dist/TikTokAudioMix.dylib
+          test -s dist/TikTokAudioMix.plist
+          ls -lh dist/
+
+      - name: Upload build
+        uses: actions/upload-artifact@v4
+        with:
+          name: TikTokAudioMix-build
+          path: dist/
+          if-no-files-found: error
+          retention-days: 14
