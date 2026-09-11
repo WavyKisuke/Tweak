@@ -171,6 +171,30 @@ static void InstallMuteButton(void) {
 }
 
 %hook AVPlayer
++ (instancetype)playerWithURL:(NSURL *)URL {
+    AVPlayer *player = %orig(URL);
+    if (IsTikTokAudio()) {
+        TrackPlayer(player);
+        if (gTikTokMuted) {
+            player.muted = YES;
+            player.volume = 0.0f;
+        }
+    }
+    return player;
+}
+
++ (instancetype)playerWithPlayerItem:(AVPlayerItem *)item {
+    AVPlayer *player = %orig(item);
+    if (IsTikTokAudio()) {
+        TrackPlayer(player);
+        if (gTikTokMuted) {
+            player.muted = YES;
+            player.volume = 0.0f;
+        }
+    }
+    return player;
+}
+
 - (instancetype)init {
     AVPlayer *player = %orig;
     if (IsTikTokAudio()) TrackPlayer(player);
