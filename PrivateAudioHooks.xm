@@ -3,10 +3,6 @@
 #import <objc/runtime.h>
 #import <objc/message.h>
 
-// TikTok-specific audio bridge.  The existing AVFoundation hooks in AudioHooks.xm
-// do not always see TikTok's private playback controller.  This file targets the
-// private feed/player layer used by recent TikTok builds.
-
 static BOOL gPrivateTikTokMuted = NO;
 
 static BOOL PTIsTikTok(void) {
@@ -33,7 +29,6 @@ static id PTObject(id obj, SEL sel) {
 static void PTMuteObject(id obj) {
     if (!obj) return;
 
-    // Common TikTok/private-player spellings.
     PTSetBool(obj, @selector(setMuted:), gPrivateTikTokMuted);
     PTSetBool(obj, @selector(setMute:), gPrivateTikTokMuted);
     PTSetBool(obj, @selector(setAudioMuted:), gPrivateTikTokMuted);
@@ -42,9 +37,6 @@ static void PTMuteObject(id obj) {
         PTSetFloat(obj, @selector(setVolume:), 0.0f);
         PTSetFloat(obj, @selector(setAudioVolume:), 0.0f);
         PTSetFloat(obj, @selector(setPlayerVolume:), 0.0f);
-    }
-
-    if (gPrivateTikTokMuted) {
         if ([obj respondsToSelector:@selector(mute)]) {
             ((void (*)(id, SEL))objc_msgSend)(obj, @selector(mute));
         }
@@ -78,37 +70,19 @@ static void PTScanObject(id root, NSInteger depth) {
     free(ivars);
 }
 
-static void PTApplyToPlayerArgument(id player) {
-    if (!player) return;
-    PTMuteObject(player);
-    PTScanObject(player, 0);
+static void PTApplyToCurrentTikTokPlayers(void) {
+    if (!PTIsTikTok()) return;
+    Class controllerClass = NSClassFromString(@"AWEPlayVideoPlayerController");
+    if (controllerClass) {
+        // Existing controller instances are reached again through the feed lifecycle hooks.
+        // The notification also causes newly-created players to be handled on their next play.
+    }
 }
-
-@interface TTKPlusPrivateMuteBridge : NSObject
-@end
-
-@implementation TTKPlusPrivateMuteBridge
-
-- (void)privateMuteButtonTapped:(id)sender {
-    gPrivateTikTokMuted = !gPrivateTikTokMuted;
-}
-
-@end
-
-// The public MUTE button lives in AudioHooks.xm. Hook its tap method so the
-// private-player layer follows the same toggle without touching its globals.
-%hook TTKPlusAudioTarget
-- (void)tapMute:(id)sender {
-    gPrivateTikTokMuted = !gPrivateTikTokMuted;
-    %orig;
-}
-%end
 
 %hook AWEPlayVideoPlayerController
-
 - (void)playerWillLoopPlaying:(id)player {
     %orig;
-    if (PTIsTikTok()) PTApplyToPlayerArgument(player);
+    if (PTIsTikTok()) PTScanObject(player, 0);
 }
 
 - (void)play {
@@ -136,11 +110,9 @@ static void PTApplyToPlayerArgument(id player) {
     if (PTIsTikTok() && gPrivateTikTokMuted) muted = YES;
     %orig;
 }
-
 %end
 
 %hook AWEFeedCellViewController
-
 - (void)containerDidFullyDisplayWithReason:(NSInteger)reason {
     %orig;
     if (PTIsTikTok() && gPrivateTikTokMuted) PTScanObject(self, 0);
@@ -148,19 +120,29 @@ static void PTApplyToPlayerArgument(id player) {
 
 - (void)playerWillLoopPlaying:(id)player {
     %orig;
-    if (PTIsTikTok()) PTApplyToPlayerArgument(player);
+    if (PTIsTikTok()) PTScanObject(player, 0);
 }
-
 %end
 
 %ctor {
-    if (PTIsTikTok()) {
-        // Delay one runloop so TikTok's private player objects have been created.
-        dispatch_async(dispatch_get_main_queue(), ^{
+    if (!PTIsTikTok()) return;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [[NSNotificationCenter defaultCenter] addObserverForName:@"TikTokPlusMuteStateChanged"
+                                                          object:nil
+                                                           queue:[NSOperationQueue mainQueue]
+                                                      usingBlock:^(NSNotification *note) {
+            NSNumber *value = note.userInfo[@"muted"];
+            gPrivateTikTokMuted = value.boolValue;
+
             if (gPrivateTikTokMuted) {
-                Class cls = NSClassFromString(@"AWEPlayVideoPlayerController");
-                if (cls) NSLog(@"[TikTokPlus] private audio bridge loaded: %@", cls);
+                // Apply immediately to any controller objects reachable from the current UI.
+                for (UIWindowScene *scene in UIApplication.sharedApplication.connectedScenes) {
+                    if (scene.activationState != UISceneActivationStateForegroundActive) continue;
+                    for (UIWindow *window in scene.windows) {
+                        if (!window.hidden && window.rootViewController) PTScanObject(window.rootViewController, 0);
+                    }
+                }
             }
-        });
-    }
+        }];
+    });
 }
