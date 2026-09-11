@@ -5,24 +5,92 @@
 static BOOL gTikTokMuted = NO;
 static UIButton *gMuteButton;
 static id gAudioTarget;
+static UIWindow *gMuteWindow;
 static NSHashTable *gPlayers;
 static NSHashTable *gAudioObjects;
 static NSMutableDictionary *gAVOriginals;
 
 static BOOL IsTikTok(void) { return [[[NSBundle mainBundle] bundleIdentifier] isEqualToString:@"com.zhiliaoapp.musically"]; }
-static UIWindow *TopWindow(void) {
-    if (@available(iOS 13.0,*)) { UIWindow *fallback=nil; for(UIScene *scene in UIApplication.sharedApplication.connectedScenes) { if(![scene isKindOfClass:[UIWindowScene class]] || scene.activationState!=UISceneActivationStateForegroundActive) continue; for(UIWindow *window in ((UIWindowScene*)scene).windows) { if(window.hidden||window.alpha<=0.01||window.windowLevel!=UIWindowLevelNormal||!window.rootViewController) continue; if(!fallback)fallback=window; if(window.isKeyWindow)return window; } } return fallback; } return nil;
+
+static UIWindowScene *ActiveScene(void) {
+    if (@available(iOS 13.0,*)) {
+        for (UIScene *scene in UIApplication.sharedApplication.connectedScenes) {
+            if ([scene isKindOfClass:[UIWindowScene class]] && scene.activationState == UISceneActivationStateForegroundActive) return (UIWindowScene *)scene;
+        }
+    }
+    return nil;
 }
+
+static UIWindow *TopWindow(void) {
+    UIWindowScene *scene = ActiveScene();
+    if (!scene) return nil;
+    UIWindow *fallback = nil;
+    for (UIWindow *window in scene.windows) {
+        if (window.hidden || window.alpha <= 0.01 || !window.rootViewController) continue;
+        if (!fallback) fallback = window;
+        if (window.isKeyWindow) return window;
+    }
+    return fallback;
+}
+
 static NSString *AVKey(Class cls, SEL sel) { return [NSString stringWithFormat:@"%p:%@",cls,NSStringFromSelector(sel)]; }
-static IMP AVOriginal(id self, SEL sel) { Class cls=object_getClass(self); while(cls) { NSValue *v=gAVOriginals[AVKey(cls,sel)]; if(v){ IMP p=NULL; [v getValue:&p]; return p; } cls=class_getSuperclass(cls); } return NULL; }
+static IMP AVOriginal(id self, SEL sel) { Class cls=object_getClass(self); while(cls){ NSValue *v=gAVOriginals[AVKey(cls,sel)]; if(v){ IMP p=NULL; [v getValue:&p]; return p; } cls=class_getSuperclass(cls); } return NULL; }
 static void ForceMuteObject(id object) { if(!object||!gTikTokMuted)return; if([object respondsToSelector:@selector(setMuted:)]) [object setMuted:YES]; if([object respondsToSelector:@selector(setVolume:)]) [object setVolume:0.0f]; if([object respondsToSelector:@selector(setOutputVolume:)]) [object setOutputVolume:0.0f]; }
 static void ApplyMuteState(void) { if(!gTikTokMuted)return; for(id o in gPlayers.allObjects)ForceMuteObject(o); for(id o in gAudioObjects.allObjects)ForceMuteObject(o); }
-void TikTokPlusSetMuted(BOOL muted) { if(!IsTikTok())return; gTikTokMuted=muted; dispatch_async(dispatch_get_main_queue(),^{ [gMuteButton setTitle:gTikTokMuted?@"UNMUTE":@"MUTE" forState:UIControlStateNormal]; }); ApplyMuteState(); [[NSNotificationCenter defaultCenter] postNotificationName:@"TikTokPlusMuteChanged" object:nil userInfo:@{@"muted":@(muted)}]; }
+
+void TikTokPlusSetMuted(BOOL muted) {
+    if(!IsTikTok()) return;
+    gTikTokMuted=muted;
+    dispatch_async(dispatch_get_main_queue(),^{
+        [gMuteButton setTitle:gTikTokMuted?@"UNMUTE":@"MUTE" forState:UIControlStateNormal];
+    });
+    ApplyMuteState();
+    [[NSNotificationCenter defaultCenter] postNotificationName:@"TikTokPlusMuteChanged" object:nil userInfo:@{@"muted":@(muted)}];
+}
+
 @interface TTKPlusAudioTarget:NSObject @end
 @implementation TTKPlusAudioTarget
 - (void)tapMute:(id)sender { TikTokPlusSetMuted(!gTikTokMuted); }
 @end
-static void InstallMuteButton(void) { dispatch_async(dispatch_get_main_queue(),^{ UIWindow *window=TopWindow(); if(!window)return; if(!gAudioTarget)gAudioTarget=[TTKPlusAudioTarget new]; if(gMuteButton.superview==window){gMuteButton.hidden=NO;gMuteButton.alpha=1.0;[window bringSubviewToFront:gMuteButton];return;} [gMuteButton removeFromSuperview]; UIButton *button=[UIButton buttonWithType:UIButtonTypeSystem]; button.frame=CGRectMake(MAX(8.0,window.bounds.size.width-110.0),60.0,96.0,42.0); button.autoresizingMask=UIViewAutoresizingFlexibleLeftMargin; button.backgroundColor=[[UIColor blackColor]colorWithAlphaComponent:0.82];button.layer.cornerRadius=10.0;button.layer.zPosition=10000.0;[button setTitle:gTikTokMuted?@"UNMUTE":@"MUTE" forState:UIControlStateNormal];[button setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];button.titleLabel.font=[UIFont boldSystemFontOfSize:14.0];[button addTarget:gAudioTarget action:@selector(tapMute:) forControlEvents:UIControlEventTouchUpInside];[window addSubview:button];[window bringSubviewToFront:button];gMuteButton=button; }); }
+
+static void InstallMuteButton(void) {
+    dispatch_async(dispatch_get_main_queue(),^{
+        if (!IsTikTok()) return;
+        UIWindowScene *scene = ActiveScene();
+        if (!scene) return;
+        if (!gAudioTarget) gAudioTarget=[TTKPlusAudioTarget new];
+        if (!gMuteWindow) {
+            gMuteWindow=[[UIWindow alloc] initWithWindowScene:scene];
+            gMuteWindow.backgroundColor=UIColor.clearColor;
+            gMuteWindow.windowLevel=UIWindowLevelAlert + 1.0;
+            gMuteWindow.rootViewController=[UIViewController new];
+            gMuteWindow.rootViewController.view.backgroundColor=UIColor.clearColor;
+            gMuteWindow.userInteractionEnabled=YES;
+        } else if (gMuteWindow.windowScene != scene) {
+            gMuteWindow.windowScene=scene;
+        }
+        gMuteWindow.frame=scene.coordinateSpace.bounds;
+        if (!gMuteButton) {
+            UIButton *button=[UIButton buttonWithType:UIButtonTypeSystem];
+            button.frame=CGRectMake(MAX(8.0,gMuteWindow.bounds.size.width-110.0),60.0,96.0,42.0);
+            button.autoresizingMask=UIViewAutoresizingFlexibleLeftMargin|UIViewAutoresizingFlexibleBottomMargin;
+            button.backgroundColor=[[UIColor blackColor] colorWithAlphaComponent:0.82];
+            button.layer.cornerRadius=10.0;
+            button.layer.zPosition=10000.0;
+            [button setTitle:gTikTokMuted?@"UNMUTE":@"MUTE" forState:UIControlStateNormal];
+            [button setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
+            button.titleLabel.font=[UIFont boldSystemFontOfSize:14.0];
+            [button addTarget:gAudioTarget action:@selector(tapMute:) forControlEvents:UIControlEventTouchUpInside];
+            [gMuteWindow.rootViewController.view addSubview:button];
+            gMuteButton=button;
+        }
+        gMuteButton.frame=CGRectMake(MAX(8.0,gMuteWindow.bounds.size.width-110.0),60.0,96.0,42.0);
+        gMuteButton.hidden=NO;
+        gMuteButton.alpha=1.0;
+        [gMuteWindow makeKeyAndVisible];
+    });
+}
+
 void TikTokPlusInstallMuteButton(void){if(IsTikTok())InstallMuteButton();}
 static void SaveAndHook(Class cls,SEL sel,IMP replacement){if(!cls||!replacement)return;Method m=class_getInstanceMethod(cls,sel);if(!m)return;NSString *key=AVKey(cls,sel);if(gAVOriginals[key])return;IMP original=method_getImplementation(m);gAVOriginals[key]=[NSValue valueWithBytes:&original objCType:@encode(IMP)];method_setImplementation(m,replacement);}
 static void TTK_AVPlayerPlay(id self,SEL cmd){[gPlayers addObject:self];if(gTikTokMuted)ForceMuteObject(self);IMP o=AVOriginal(self,cmd);if(o)((void(*)(id,SEL))o)(self,cmd);if(gTikTokMuted)ForceMuteObject(self);}
