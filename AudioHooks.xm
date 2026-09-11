@@ -4,6 +4,7 @@
 static BOOL gTikTokMuted = NO;
 static UIButton *gMuteButton = nil;
 static NSHashTable<AVPlayer *> *gTrackedPlayers = nil;
+static dispatch_source_t gMuteTimer = nil;
 
 static BOOL IsTikTokAudio(void) {
     return [[[NSBundle mainBundle] bundleIdentifier] isEqualToString:@"com.zhiliaoapp.musically"];
@@ -27,15 +28,22 @@ static UIWindow *AudioTopWindow(void) {
 
 static void TrackPlayer(AVPlayer *player) {
     if (!player || !gTrackedPlayers) return;
-    @synchronized (gTrackedPlayers) { [gTrackedPlayers addObject:player]; }
-    if (gTikTokMuted) [player setVolume:0.0f];
+    @synchronized (gTrackedPlayers) {
+        [gTrackedPlayers addObject:player];
+        if (gTikTokMuted) {
+            player.muted = YES;
+            [player setVolume:0.0f];
+        }
+    }
 }
 
 static void ApplyMuteState(void) {
     if (!gTrackedPlayers) return;
     @synchronized (gTrackedPlayers) {
         for (AVPlayer *player in gTrackedPlayers.allObjects) {
-            if ([player isKindOfClass:[AVPlayer class]]) [player setVolume:(gTikTokMuted ? 0.0f : 1.0f)];
+            if (![player isKindOfClass:[AVPlayer class]]) continue;
+            player.muted = gTikTokMuted;
+            [player setVolume:(gTikTokMuted ? 0.0f : 1.0f)];
         }
     }
 }
@@ -103,9 +111,33 @@ static void InstallMuteButton(void) {
     %orig(volume);
 }
 
+- (void)setMuted:(BOOL)muted {
+    if (IsTikTokAudio()) {
+        TrackPlayer(self);
+        if (gTikTokMuted) muted = YES;
+    }
+    %orig(muted);
+}
+
+- (void)play {
+    if (IsTikTokAudio() && gTikTokMuted) {
+        self.muted = YES;
+        self.volume = 0.0f;
+    }
+    %orig;
+    if (IsTikTokAudio() && gTikTokMuted) {
+        self.muted = YES;
+        self.volume = 0.0f;
+    }
+}
+
 - (void)replaceCurrentItemWithPlayerItem:(AVPlayerItem *)item {
     if (IsTikTokAudio()) TrackPlayer(self);
     %orig(item);
+    if (IsTikTokAudio() && gTikTokMuted) {
+        self.muted = YES;
+        self.volume = 0.0f;
+    }
 }
 %end
 
@@ -116,4 +148,17 @@ static void InstallMuteButton(void) {
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         InstallMuteButton();
     });
+
+    // TikTok can recreate players or restore their volume while scrolling.
+    // Re-apply the user's mute choice periodically while the tweak is loaded.
+    gMuteTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
+    dispatch_source_set_timer(gMuteTimer,
+                              dispatch_time(DISPATCH_TIME_NOW, 2 * NSEC_PER_SEC),
+                              750 * NSEC_PER_MSEC,
+                              100 * NSEC_PER_MSEC);
+    dispatch_source_set_event_handler(gMuteTimer, ^{
+        InstallMuteButton();
+        if (gTikTokMuted) ApplyMuteState();
+    });
+    dispatch_resume(gMuteTimer);
 }
