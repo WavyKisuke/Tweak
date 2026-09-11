@@ -8,6 +8,8 @@ static NSHashTable<AVAudioPlayer *> *gTrackedAudioPlayers = nil;
 static NSHashTable<AVAudioEngine *> *gTrackedEngines = nil;
 static NSHashTable<AVAudioPlayerNode *> *gTrackedPlayerNodes = nil;
 static NSHashTable<AVAudioMixerNode *> *gTrackedMixerNodes = nil;
+static NSHashTable<AVAudioEnvironmentNode *> *gTrackedEnvironmentNodes = nil;
+static NSHashTable<AVSampleBufferAudioRenderer *> *gTrackedSampleRenderers = nil;
 static dispatch_source_t gMuteTimer = nil;
 
 static BOOL IsTikTokAudio(void) {
@@ -55,6 +57,16 @@ static void TrackMixerNode(AVAudioMixerNode *node) {
     @synchronized (gTrackedMixerNodes) { [gTrackedMixerNodes addObject:node]; }
 }
 
+static void TrackEnvironmentNode(AVAudioEnvironmentNode *node) {
+    if (!node || !gTrackedEnvironmentNodes) return;
+    @synchronized (gTrackedEnvironmentNodes) { [gTrackedEnvironmentNodes addObject:node]; }
+}
+
+static void TrackSampleRenderer(AVSampleBufferAudioRenderer *renderer) {
+    if (!renderer || !gTrackedSampleRenderers) return;
+    @synchronized (gTrackedSampleRenderers) { [gTrackedSampleRenderers addObject:renderer]; }
+}
+
 static void ApplyMuteState(void) {
     if (gTrackedPlayers) {
         @synchronized (gTrackedPlayers) {
@@ -98,6 +110,25 @@ static void ApplyMuteState(void) {
             for (AVAudioMixerNode *node in gTrackedMixerNodes.allObjects) {
                 if (![node isKindOfClass:[AVAudioMixerNode class]]) continue;
                 node.outputVolume = gTikTokMuted ? 0.0f : 1.0f;
+            }
+        }
+    }
+
+    if (gTrackedEnvironmentNodes) {
+        @synchronized (gTrackedEnvironmentNodes) {
+            for (AVAudioEnvironmentNode *node in gTrackedEnvironmentNodes.allObjects) {
+                if (![node isKindOfClass:[AVAudioEnvironmentNode class]]) continue;
+                node.outputVolume = gTikTokMuted ? 0.0f : 1.0f;
+            }
+        }
+    }
+
+    if (gTrackedSampleRenderers) {
+        @synchronized (gTrackedSampleRenderers) {
+            for (AVSampleBufferAudioRenderer *renderer in gTrackedSampleRenderers.allObjects) {
+                if (![renderer isKindOfClass:[AVSampleBufferAudioRenderer class]]) continue;
+                renderer.muted = gTikTokMuted;
+                if (gTikTokMuted) renderer.volume = 0.0f;
             }
         }
     }
@@ -278,6 +309,46 @@ static void InstallMuteButton(void) {
 }
 %end
 
+%hook AVAudioEnvironmentNode
+- (instancetype)init {
+    AVAudioEnvironmentNode *node = %orig;
+    if (IsTikTokAudio()) TrackEnvironmentNode(node);
+    return node;
+}
+
+- (void)setOutputVolume:(float)volume {
+    if (IsTikTokAudio()) {
+        TrackEnvironmentNode(self);
+        if (gTikTokMuted) volume = 0.0f;
+    }
+    %orig(volume);
+}
+%end
+
+%hook AVSampleBufferAudioRenderer
+- (instancetype)init {
+    AVSampleBufferAudioRenderer *renderer = %orig;
+    if (IsTikTokAudio()) TrackSampleRenderer(renderer);
+    return renderer;
+}
+
+- (void)setMuted:(BOOL)muted {
+    if (IsTikTokAudio()) {
+        TrackSampleRenderer(self);
+        if (gTikTokMuted) muted = YES;
+    }
+    %orig(muted);
+}
+
+- (void)setVolume:(float)volume {
+    if (IsTikTokAudio()) {
+        TrackSampleRenderer(self);
+        if (gTikTokMuted) volume = 0.0f;
+    }
+    %orig(volume);
+}
+%end
+
 %ctor {
     if (!IsTikTokAudio()) return;
 
@@ -286,6 +357,8 @@ static void InstallMuteButton(void) {
     gTrackedEngines = [NSHashTable weakObjectsHashTable];
     gTrackedPlayerNodes = [NSHashTable weakObjectsHashTable];
     gTrackedMixerNodes = [NSHashTable weakObjectsHashTable];
+    gTrackedEnvironmentNodes = [NSHashTable weakObjectsHashTable];
+    gTrackedSampleRenderers = [NSHashTable weakObjectsHashTable];
 
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         InstallMuteButton();
