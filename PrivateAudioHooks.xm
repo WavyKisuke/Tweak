@@ -9,17 +9,22 @@ static BOOL gPrivateTikTokMuted = NO;
 static __weak id gCurrentFeedCell;
 static __weak id gCurrentPlayerController;
 static __weak id gCurrentPlayer;
+static NSMutableDictionary *gOriginalIMPs;
 
 static BOOL PTIsTikTok(void) {
     return [[[NSBundle mainBundle] bundleIdentifier] isEqualToString:@"com.zhiliaoapp.musically"];
 }
 
-static id PTObject(id object, SEL selector) {
-    if (!object || ![object respondsToSelector:selector]) return nil;
-    return ((id(*)(id,SEL))objc_msgSend)(object, selector);
+static NSString *PTKey(Class cls, SEL sel) {
+    return [NSString stringWithFormat:@"%p:%@", cls, NSStringFromSelector(sel)];
 }
 
-static void PTMuteObject(id object) {
+static IMP PTOriginal(Class cls, SEL sel) {
+    NSValue *value = gOriginalIMPs[PTKey(cls, sel)];
+    return value ? (IMP)value.pointerValue : NULL;
+}
+
+static void PTForceObject(id object) {
     if (!object || !gPrivateTikTokMuted) return;
     if ([object respondsToSelector:@selector(setMuted:)]) ((void(*)(id,SEL,BOOL))objc_msgSend)(object,@selector(setMuted:),YES);
     if ([object respondsToSelector:@selector(setMute:)]) ((void(*)(id,SEL,BOOL))objc_msgSend)(object,@selector(setMute:),YES);
@@ -31,13 +36,12 @@ static void PTMuteObject(id object) {
 }
 
 static void PTScanObject(id root, NSInteger depth) {
-    if (!root || depth > 5) return;
-    PTMuteObject(root);
+    if (!root || depth > 4 || !gPrivateTikTokMuted) return;
+    PTForceObject(root);
     Class cls = object_getClass(root);
-    if (!cls) return;
     unsigned int count = 0;
     Ivar *ivars = class_copyIvarList(cls,&count);
-    for (unsigned int i=0; i<count; i++) {
+    for (unsigned int i=0;i<count;i++) {
         const char *type = ivar_getTypeEncoding(ivars[i]);
         if (!type || type[0] != '@') continue;
         id child = object_getIvar(root,ivars[i]);
@@ -55,121 +59,112 @@ static void PTScanObject(id root, NSInteger depth) {
     free(ivars);
 }
 
-static IMP gSetVolumeOrig;
-static IMP gSetMutedOrig;
-static IMP gSetAudioVolumeOrig;
-static IMP gSetAudioMutedOrig;
-static IMP gSetPlayerVolumeOrig;
-static IMP gMuteOrig;
-
-static void PTSetVolume(id self, SEL sel, float value) {
-    if (PTIsTikTok() && gPrivateTikTokMuted) value = 0.0f;
-    if (gSetVolumeOrig) ((void(*)(id,SEL,float))gSetVolumeOrig)(self,sel,value);
-}
-
-static void PTSetMuted(id self, SEL sel, BOOL value) {
-    if (PTIsTikTok() && gPrivateTikTokMuted) value = YES;
-    if (gSetMutedOrig) ((void(*)(id,SEL,BOOL))gSetMutedOrig)(self,sel,value);
-}
-
-static void PTSetAudioVolume(id self, SEL sel, float value) {
-    if (PTIsTikTok() && gPrivateTikTokMuted) value = 0.0f;
-    if (gSetAudioVolumeOrig) ((void(*)(id,SEL,float))gSetAudioVolumeOrig)(self,sel,value);
-}
-
-static void PTSetAudioMuted(id self, SEL sel, BOOL value) {
-    if (PTIsTikTok() && gPrivateTikTokMuted) value = YES;
-    if (gSetAudioMutedOrig) ((void(*)(id,SEL,BOOL))gSetAudioMutedOrig)(self,sel,value);
-}
-
-static void PTSetPlayerVolume(id self, SEL sel, float value) {
-    if (PTIsTikTok() && gPrivateTikTokMuted) value = 0.0f;
-    if (gSetPlayerVolumeOrig) ((void(*)(id,SEL,float))gSetPlayerVolumeOrig)(self,sel,value);
-}
-
-static void PTMute(id self, SEL sel) {
-    if (gMuteOrig) ((void(*)(id,SEL))gMuteOrig)(self,sel);
-}
-
-static void PTSwizzleSelector(Class cls, SEL sel, IMP replacement, IMP *original) {
-    if (!cls || !class_getInstanceMethod(cls,sel) || *original) return;
+static void PTInstall(Class cls, SEL sel, IMP replacement) {
+    if (!cls || !replacement) return;
     Method method = class_getInstanceMethod(cls,sel);
-    *original = method_getImplementation(method);
+    if (!method) return;
+    NSString *key = PTKey(cls,sel);
+    if (gOriginalIMPs[key]) return;
+    gOriginalIMPs[key] = [NSValue valueWithPointer:method_getImplementation(method)];
     method_setImplementation(method,replacement);
 }
 
-static void PTInstallPlayerAudioHooks(void) {
-    Class cls = NSClassFromString(@"AWEPlayVideoPlayerController");
-    if (!cls) return;
-    PTSwizzleSelector(cls,@selector(setVolume:),(IMP)PTSetVolume,&gSetVolumeOrig);
-    PTSwizzleSelector(cls,@selector(setMuted:),(IMP)PTSetMuted,&gSetMutedOrig);
-    PTSwizzleSelector(cls,@selector(setAudioVolume:),(IMP)PTSetAudioVolume,&gSetAudioVolumeOrig);
-    PTSwizzleSelector(cls,@selector(setAudioMuted:),(IMP)PTSetAudioMuted,&gSetAudioMutedOrig);
-    PTSwizzleSelector(cls,@selector(setPlayerVolume:),(IMP)PTSetPlayerVolume,&gSetPlayerVolumeOrig);
-    PTSwizzleSelector(cls,@selector(mute),(IMP)PTMute,&gMuteOrig);
+static void PTSetBool(id self, SEL sel, BOOL value) {
+    if (gPrivateTikTokMuted) value = YES;
+    IMP orig = PTOriginal(object_getClass(self),sel);
+    if (orig) ((void(*)(id,SEL,BOOL))orig)(self,sel,value);
 }
 
-static void PTApplyCurrentPlayer(void) {
+static void PTSetFloat(id self, SEL sel, float value) {
+    if (gPrivateTikTokMuted) value = 0.0f;
+    IMP orig = PTOriginal(object_getClass(self),sel);
+    if (orig) ((void(*)(id,SEL,float))orig)(self,sel,value);
+}
+
+static void PTMute(id self, SEL sel) {
+    IMP orig = PTOriginal(object_getClass(self),sel);
+    if (orig) ((void(*)(id,SEL))orig)(self,sel);
+}
+
+static void PTPlayerLoop(id self, SEL sel, id player) {
+    gCurrentPlayerController = self;
+    gCurrentPlayer = player;
+    IMP orig = PTOriginal(object_getClass(self),sel);
+    if (orig) ((void(*)(id,SEL,id))orig)(self,sel,player);
+    if (PTIsTikTok()) {
+        TikTokPlusInstallMuteButton();
+        if (gPrivateTikTokMuted) {
+            PTForceObject(self);
+            PTScanObject(player,0);
+        }
+    }
+}
+
+static void PTFeedDisplay(id self, SEL sel, NSInteger reason) {
+    gCurrentFeedCell = self;
+    IMP orig = PTOriginal(object_getClass(self),sel);
+    if (orig) ((void(*)(id,SEL,NSInteger))orig)(self,sel,reason);
+    if (PTIsTikTok()) {
+        TikTokPlusInstallMuteButton();
+        if (gPrivateTikTokMuted) PTScanObject(self,0);
+    }
+}
+
+static void PTControllerPlay(id self, SEL sel) {
+    gCurrentPlayerController = self;
+    if (PTIsTikTok() && gPrivateTikTokMuted) PTForceObject(self);
+    IMP orig = PTOriginal(object_getClass(self),sel);
+    if (orig) ((void(*)(id,SEL))orig)(self,sel);
+    if (PTIsTikTok() && gPrivateTikTokMuted) PTScanObject(self,0);
+}
+
+static void InstallPrivateHooks(void) {
+    Class controller = NSClassFromString(@"AWEPlayVideoPlayerController");
+    Class cell = NSClassFromString(@"AWEFeedCellViewController");
+    if (!controller && !cell) return;
+
+    PTInstall(controller,@selector(playerWillLoopPlaying:),(IMP)PTPlayerLoop);
+    PTInstall(controller,@selector(play),(IMP)PTControllerPlay);
+    PTInstall(cell,@selector(playerWillLoopPlaying:),(IMP)PTPlayerLoop);
+    PTInstall(cell,@selector(containerDidFullyDisplayWithReason:),(IMP)PTFeedDisplay);
+
+    NSArray *boolSelectors = @[@"setMuted:",@"setMute:",@"setAudioMuted:"];
+    NSArray *floatSelectors = @[@"setVolume:",@"setAudioVolume:",@"setPlayerVolume:"];
+    NSArray *voidSelectors = @[@"mute"];
+    for (Class cls in @[controller ?: (Class)Nil, cell ?: (Class)Nil]) {
+        if (!cls) continue;
+        for (NSString *name in boolSelectors) PTInstall(cls,NSSelectorFromString(name),(IMP)PTSetBool);
+        for (NSString *name in floatSelectors) PTInstall(cls,NSSelectorFromString(name),(IMP)PTSetFloat);
+        for (NSString *name in voidSelectors) PTInstall(cls,NSSelectorFromString(name),(IMP)PTMute);
+    }
+}
+
+static void PTApplyCurrent(void) {
     if (!gPrivateTikTokMuted) return;
-    PTInstallPlayerAudioHooks();
-    PTMuteObject(gCurrentPlayer);
-    PTMuteObject(gCurrentPlayerController);
-    PTMuteObject(PTObject(gCurrentPlayerController,@selector(player)));
-    PTMuteObject(PTObject(gCurrentPlayerController,@selector(currentPlayer)));
+    PTForceObject(gCurrentPlayer);
+    PTForceObject(gCurrentPlayerController);
+    if ([gCurrentPlayerController respondsToSelector:@selector(player)]) PTForceObject(((id(*)(id,SEL))objc_msgSend)(gCurrentPlayerController,@selector(player)));
+    if ([gCurrentPlayerController respondsToSelector:@selector(currentPlayer)]) PTForceObject(((id(*)(id,SEL))objc_msgSend)(gCurrentPlayerController,@selector(currentPlayer)));
     PTScanObject(gCurrentFeedCell,0);
     PTScanObject(gCurrentPlayerController,0);
     PTScanObject(gCurrentPlayer,0);
 }
 
-%hook AWEPlayVideoPlayerController
-- (void)playerWillLoopPlaying:(id)player {
-    gCurrentPlayerController = self;
-    gCurrentPlayer = player;
-    %orig;
-    if (PTIsTikTok()) {
-        TikTokPlusInstallMuteButton();
-        if (gPrivateTikTokMuted) PTApplyCurrentPlayer();
-    }
-}
-- (void)play {
-    gCurrentPlayerController = self;
-    id player = PTObject(self,@selector(player));
-    if (!player) player = PTObject(self,@selector(currentPlayer));
-    if (player) gCurrentPlayer = player;
-    if (PTIsTikTok() && gPrivateTikTokMuted) PTApplyCurrentPlayer();
-    %orig;
-    if (PTIsTikTok() && gPrivateTikTokMuted) PTApplyCurrentPlayer();
-}
-%end
-
-%hook AWEFeedCellViewController
-- (void)containerDidFullyDisplayWithReason:(NSInteger)reason {
-    gCurrentFeedCell = self;
-    %orig;
-    if (PTIsTikTok()) {
-        TikTokPlusInstallMuteButton();
-        PTInstallPlayerAudioHooks();
-        if (gPrivateTikTokMuted) PTApplyCurrentPlayer();
-    }
-}
-- (void)playerWillLoopPlaying:(id)player {
-    gCurrentFeedCell = self;
-    gCurrentPlayer = player;
-    %orig;
-    if (PTIsTikTok()) {
-        TikTokPlusInstallMuteButton();
-        if (gPrivateTikTokMuted) PTApplyCurrentPlayer();
-    }
-}
-%end
-
 %ctor {
     if (!PTIsTikTok()) return;
+    gOriginalIMPs = [NSMutableDictionary dictionary];
     dispatch_async(dispatch_get_main_queue(), ^{
         [[NSNotificationCenter defaultCenter] addObserverForName:@"TikTokPlusMuteChanged" object:nil queue:[NSOperationQueue mainQueue] usingBlock:^(NSNotification *note) {
             gPrivateTikTokMuted = [note.userInfo[@"muted"] boolValue];
-            PTInstallPlayerAudioHooks();
-            if (gPrivateTikTokMuted) PTApplyCurrentPlayer();
+            if (gPrivateTikTokMuted) PTApplyCurrent();
         }];
     });
+    dispatch_source_t timer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER,0,0,dispatch_get_main_queue());
+    dispatch_source_set_timer(timer,dispatch_time(DISPATCH_TIME_NOW,NSEC_PER_SEC),NSEC_PER_SEC,100*NSEC_PER_MSEC);
+    dispatch_source_set_event_handler(timer,^{
+        InstallPrivateHooks();
+        TikTokPlusInstallMuteButton();
+        if (gPrivateTikTokMuted) PTApplyCurrent();
+    });
+    dispatch_resume(timer);
 }
