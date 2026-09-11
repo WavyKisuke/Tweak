@@ -1,54 +1,93 @@
-2026-09-11T04:15:46.2969554Z ##[group]Run set -euo pipefail
-2026-09-11T04:15:46.2969911Z [36;1mset -euo pipefail[0m
-2026-09-11T04:15:46.2970179Z [36;1mexport THEOS="$HOME/theos"[0m
-2026-09-11T04:15:46.2970475Z [36;1mecho "THEOS=$THEOS" >> "$GITHUB_ENV"[0m
-2026-09-11T04:15:46.2970783Z [36;1mecho "$THEOS/bin" >> "$GITHUB_PATH"[0m
-2026-09-11T04:15:46.2971140Z [36;1mecho "$THEOS/toolchain/linux/iphone/bin" >> "$GITHUB_PATH"[0m
-2026-09-11T04:15:46.2971514Z [36;1mif [ ! -x "$THEOS/bin/make" ]; then[0m
-2026-09-11T04:15:46.2972076Z [36;1m  bash -c "$(curl -fsSL https://raw.githubusercontent.com/theos/theos/master/bin/install-theos)"[0m
-2026-09-11T04:15:46.2972572Z [36;1mfi[0m
-2026-09-11T04:15:46.3010282Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
-2026-09-11T04:15:46.3010633Z ##[endgroup]
-2026-09-11T04:15:46.4101708Z [0;34m==> [1;34mTheos Installer:[m Starting install...
-2026-09-11T04:15:46.4102254Z 
-2026-09-11T04:15:46.4102883Z [0;37m==> [1;37mPlatform: Linux[m
-2026-09-11T04:15:46.4112282Z 
-2026-09-11T04:15:46.4112958Z [0;36m==> [1;36mPreparing to install dependencies. Please enter your password if prompted:[m
-2026-09-11T04:15:46.5405537Z 
-2026-09-11T04:15:46.5406297Z WARNING: apt does not have a stable CLI interface. Use with caution in scripts.
-2026-09-11T04:15:46.5406875Z 
-2026-09-11T04:15:46.6108907Z Get:1 file:/etc/apt/apt-mirrors.txt Mirrorlist [144 B]
-2026-09-11T04:15:46.6629208Z Hit:2 http://azure.archive.ubuntu.com/ubuntu noble InRelease
-2026-09-11T04:15:46.6630626Z Hit:6 https://dl.google.com/linux/chrome-stable/deb stable InRelease
-2026-09-11T04:15:46.6640116Z Hit:3 http://azure.archive.ubuntu.com/ubuntu noble-updates InRelease
-2026-09-11T04:15:46.6654597Z Hit:4 http://azure.archive.ubuntu.com/ubuntu noble-backports InRelease
-2026-09-11T04:15:46.6668781Z Hit:5 http://azure.archive.ubuntu.com/ubuntu noble-security InRelease
-2026-09-11T04:15:46.8446619Z Hit:7 https://packages.microsoft.com/ubuntu/24.04/prod noble InRelease
-2026-09-11T04:15:47.9072459Z Reading package lists...
-2026-09-11T04:15:48.0894903Z Building dependency tree...
-2026-09-11T04:15:48.0901842Z Reading state information...
-2026-09-11T04:15:48.1043665Z 50 packages can be upgraded. Run 'apt list --upgradable' to see them.
-2026-09-11T04:15:48.1157366Z 
-2026-09-11T04:15:48.1159809Z WARNING: apt does not have a stable CLI interface. Use with caution in scripts.
-2026-09-11T04:15:48.1160184Z 
-2026-09-11T04:15:48.1263117Z Reading package lists...
-2026-09-11T04:15:48.3021040Z Building dependency tree...
-2026-09-11T04:15:48.3028246Z Reading state information...
-2026-09-11T04:15:48.4489572Z fakeroot is already the newest version (1.33-1).
-2026-09-11T04:15:48.4490221Z rsync is already the newest version (3.2.7-1ubuntu1.5).
-2026-09-11T04:15:48.4490821Z curl is already the newest version (8.5.0-2ubuntu10.13).
-2026-09-11T04:15:48.4491401Z perl is already the newest version (5.38.2-3.2ubuntu0.4).
-2026-09-11T04:15:48.4491934Z perl set to manually installed.
-2026-09-11T04:15:48.4492434Z zip is already the newest version (3.0-13ubuntu0.2).
-2026-09-11T04:15:48.4493091Z git is already the newest version (1:2.55.0-0ppa1~ubuntu24.04.2).
-2026-09-11T04:15:48.4493535Z git set to manually installed.
-2026-09-11T04:15:48.4493926Z libxml2 is already the newest version (2.9.14+dfsg-1.3ubuntu3.8).
-2026-09-11T04:15:48.4494353Z libxml2 set to manually installed.
-2026-09-11T04:15:48.5051298Z The following NEW packages will be installed:
-2026-09-11T04:15:48.5057808Z   build-essential
-2026-09-11T04:15:48.5541069Z 0 upgraded, 1 newly installed, 0 to remove and 50 not upgraded.
-2026-09-11T04:15:48.6068680Z Need to get 4928 B of archives.
-2026-09-11T04:15:48.6069404Z After this operation, 17.4 kB of additional disk space will be used.
-2026-09-11T04:15:48.6070152Z Get:1 file:/etc/apt/apt-mirrors.txt Mirrorlist [144 B]
-2026-09-11T04:15:48.6442032Z Get:2 http://azure.archive.ubuntu.com/ubuntu noble/main amd64 build-essential amd64 12.10ubuntu1 [4928 B]
-2026-09-1
+name: Build TikTokPlus tweak
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache Theos toolchain + SDKs
+        uses: actions/cache@v4
+        with:
+          path: ~/theos
+          key: theos-ubuntu24-v2-iphoneos14
+          restore-keys: |
+            theos-ubuntu24-v2-
+
+      - name: Install build dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y libplist-2.0-4 libplist-utils
+
+      - name: Install Theos + iOS SDK
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          export THEOS="$HOME/theos"
+          mkdir -p "$THEOS"
+
+          if [ ! -x "$THEOS/bin/make" ]; then
+            bash -c "$(curl -fsSL https://raw.githubusercontent.com/theos/theos/master/bin/install-theos)" \
+              || echo "::warning::install-theos returned non-zero (likely SDK rate-limit); falling back to authenticated gh fetch"
+
+            if [ ! -d "$THEOS/sdks" ] || [ -z "$(ls -A "$THEOS/sdks" 2>/dev/null | grep sdk || true)" ]; then
+              mkdir -p "$THEOS/sdks"
+              echo "Fetching iOS SDK via authenticated gh CLI..."
+              LATEST_TAG="$(gh release view --repo theos/sdks --json tagName -q .tagName)"
+              mkdir -p /tmp/sdks
+              gh release download "$LATEST_TAG" --repo theos/sdks \
+                --pattern 'iPhoneOS*.sdk.tar.xz' \
+                --dir /tmp/sdks
+              for tar in /tmp/sdks/*.sdk.tar.xz; do
+                [ -f "$tar" ] || continue
+                tar -xJv -C "$THEOS/sdks" < "$tar"
+              done
+            fi
+          fi
+
+          if [ -z "$(ls -A "$THEOS/sdks" 2>/dev/null | grep sdk || true)" ]; then
+            echo "::error::No iOS SDK found under $THEOS/sdks after install."
+            exit 1
+          fi
+
+          echo "THEOS=$THEOS" >> "$GITHUB_ENV"
+          echo "$THEOS/bin" >> "$GITHUB_PATH"
+          echo "$THEOS/toolchain/linux/iphone/bin" >> "$GITHUB_PATH"
+          echo "THEOS_MAKE_PATH=$THEOS/makefiles" >> "$GITHUB_ENV"
+          ls "$THEOS/sdks"
+
+      - name: Build tweak
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x build.sh
+          ./build.sh
+
+      - name: Verify artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s dist/TikTokPlus.dylib
+          test -s dist/TikTokPlus.plist
+          ls -lh dist/
+
+      - name: Upload build
+        uses: actions/upload-artifact@v4
+        with:
+          name: TikTokPlus-build
+          path: dist/
+          if-no-files-found: error
+          retention-days: 14
