@@ -1,8 +1,8 @@
-Package: com.wavytakahiro.tiktokaudiomix
-Name: TikTokAudioMix
+Package: com.wavytakahiro.tiktokplus
+Name: TikTokPlus
 Version: 1.0.0
 Architecture: iphoneos-arm64
-Description: Makes TikTok audio mix with other apps and adds a TikTok-only mute button.
+Description: TikTok tweak with audio mixing, TikTok-only mute, ad hiding, and highest-available video save.
 Maintainer: WavyKisuke
 Author: WavyKisuke
 Section: Tweaks
