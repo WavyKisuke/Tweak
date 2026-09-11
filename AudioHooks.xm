@@ -4,6 +4,8 @@
 static BOOL gTikTokMuted = NO;
 static UIButton *gMuteButton = nil;
 static NSHashTable<AVPlayer *> *gTrackedPlayers = nil;
+static NSHashTable<AVAudioPlayer *> *gTrackedAudioPlayers = nil;
+static NSHashTable<AVAudioEngine *> *gTrackedEngines = nil;
 static dispatch_source_t gMuteTimer = nil;
 
 static BOOL IsTikTokAudio(void) {
@@ -26,8 +28,6 @@ static UIWindow *AudioTopWindow(void) {
     return nil;
 }
 
-// Tracking must never change the player's volume itself.  Doing that from
-// setVolume:/setMuted: would re-enter our hooks recursively.
 static void TrackPlayer(AVPlayer *player) {
     if (!player || !gTrackedPlayers) return;
     @synchronized (gTrackedPlayers) {
@@ -35,13 +35,46 @@ static void TrackPlayer(AVPlayer *player) {
     }
 }
 
+static void TrackAudioPlayer(AVAudioPlayer *player) {
+    if (!player || !gTrackedAudioPlayers) return;
+    @synchronized (gTrackedAudioPlayers) {
+        [gTrackedAudioPlayers addObject:player];
+    }
+}
+
+static void TrackEngine(AVAudioEngine *engine) {
+    if (!engine || !gTrackedEngines) return;
+    @synchronized (gTrackedEngines) {
+        [gTrackedEngines addObject:engine];
+    }
+}
+
 static void ApplyMuteState(void) {
-    if (!gTrackedPlayers) return;
-    @synchronized (gTrackedPlayers) {
-        for (AVPlayer *player in gTrackedPlayers.allObjects) {
-            if (![player isKindOfClass:[AVPlayer class]]) continue;
-            player.muted = gTikTokMuted;
-            [player setVolume:(gTikTokMuted ? 0.0f : 1.0f)];
+    if (gTrackedPlayers) {
+        @synchronized (gTrackedPlayers) {
+            for (AVPlayer *player in gTrackedPlayers.allObjects) {
+                if (![player isKindOfClass:[AVPlayer class]]) continue;
+                player.muted = gTikTokMuted;
+                [player setVolume:(gTikTokMuted ? 0.0f : 1.0f)];
+            }
+        }
+    }
+
+    if (gTrackedAudioPlayers) {
+        @synchronized (gTrackedAudioPlayers) {
+            for (AVAudioPlayer *player in gTrackedAudioPlayers.allObjects) {
+                if (![player isKindOfClass:[AVAudioPlayer class]]) continue;
+                player.volume = gTikTokMuted ? 0.0f : 1.0f;
+            }
+        }
+    }
+
+    if (gTrackedEngines) {
+        @synchronized (gTrackedEngines) {
+            for (AVAudioEngine *engine in gTrackedEngines.allObjects) {
+                if (![engine isKindOfClass:[AVAudioEngine class]]) continue;
+                engine.mainMixerNode.outputVolume = gTikTokMuted ? 0.0f : 1.0f;
+            }
         }
     }
 }
@@ -139,10 +172,64 @@ static void InstallMuteButton(void) {
 }
 %end
 
+%hook AVAudioPlayer
+- (instancetype)initWithContentsOfURL:(NSURL *)url error:(NSError **)outError {
+    AVAudioPlayer *player = %orig(url, outError);
+    if (IsTikTokAudio()) TrackAudioPlayer(player);
+    return player;
+}
+
+- (instancetype)initWithData:(NSData *)data error:(NSError **)outError {
+    AVAudioPlayer *player = %orig(data, outError);
+    if (IsTikTokAudio()) TrackAudioPlayer(player);
+    return player;
+}
+
+- (void)setVolume:(float)volume {
+    if (IsTikTokAudio()) {
+        TrackAudioPlayer(self);
+        if (gTikTokMuted) volume = 0.0f;
+    }
+    %orig(volume);
+}
+
+- (BOOL)play {
+    if (IsTikTokAudio() && gTikTokMuted) self.volume = 0.0f;
+    BOOL result = %orig;
+    if (IsTikTokAudio() && gTikTokMuted) self.volume = 0.0f;
+    return result;
+}
+%end
+
+%hook AVAudioEngine
+- (instancetype)init {
+    AVAudioEngine *engine = %orig;
+    if (IsTikTokAudio()) TrackEngine(engine);
+    return engine;
+}
+
+- (BOOL)startAndReturnError:(NSError **)outError {
+    if (IsTikTokAudio()) TrackEngine(self);
+    BOOL result = %orig(outError);
+    if (IsTikTokAudio() && gTikTokMuted) self.mainMixerNode.outputVolume = 0.0f;
+    return result;
+}
+%end
+
+%hook AVAudioMixingDestination
+- (void)setVolume:(float)volume {
+    if (IsTikTokAudio() && gTikTokMuted) volume = 0.0f;
+    %orig(volume);
+}
+%end
+
 %ctor {
     if (!IsTikTokAudio()) return;
 
     gTrackedPlayers = [NSHashTable weakObjectsHashTable];
+    gTrackedAudioPlayers = [NSHashTable weakObjectsHashTable];
+    gTrackedEngines = [NSHashTable weakObjectsHashTable];
+
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         InstallMuteButton();
     });
