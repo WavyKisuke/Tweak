@@ -63,7 +63,8 @@ static void SaveCurrentVideo(void) {
         [[NSFileManager defaultManager] moveItemAtURL:location toURL:dest error:&moveError];
         if (moveError) { ShowMessage(@"Could not save the downloaded file."); return; }
         dispatch_async(dispatch_get_main_queue(), ^{
-            UIViewController *vc = TopController(TopWindow().rootViewController);
+            UIWindow *w = TopWindow();
+            UIViewController *vc = TopController(w.rootViewController);
             if (!vc) return;
             UIActivityViewController *share = [[UIActivityViewController alloc] initWithActivityItems:@[dest] applicationActivities:nil];
             if (share.popoverPresentationController) {
@@ -118,22 +119,21 @@ static BOOL ClassLooksLikeAd(UIView *v) {
     return NO;
 }
 
-static BOOL ViewTreeLooksLikeAd(UIView *v, NSInteger depth) {
-    if (depth > 4) return NO;
+static BOOL ViewLooksLikeAd(UIView *v) {
     if (ClassLooksLikeAd(v)) return YES;
     if ([v isKindOfClass:UILabel.class] && TextLooksLikeAd(((UILabel *)v).text)) return YES;
     if ([v isKindOfClass:UIButton.class] && TextLooksLikeAd([((UIButton *)v) titleForState:UIControlStateNormal])) return YES;
-    if (TextLooksLikeAd(v.accessibilityLabel)) return YES;
-    for (UIView *sub in v.subviews) if (ViewTreeLooksLikeAd(sub, depth + 1)) return YES;
-    return NO;
+    return TextLooksLikeAd(v.accessibilityLabel);
 }
 
 static void ScanForAds(UIView *root) {
     if (!gAdBlockEnabled || !root.window) return;
-    for (UIView *sub in root.subviews) {
-        if (sub == gSaveButton) continue;
-        if (ViewTreeLooksLikeAd(sub, 0)) sub.hidden = YES;
-        else ScanForAds(sub);
+    NSMutableArray *stack = [NSMutableArray arrayWithObject:root];
+    while (stack.count) {
+        UIView *v = stack.lastObject;
+        [stack removeLastObject];
+        if (v != gSaveButton && ViewLooksLikeAd(v)) v.hidden = YES;
+        for (UIView *sub in v.subviews) if (sub != gSaveButton) [stack addObject:sub];
     }
 }
 
@@ -171,16 +171,6 @@ static void ScanForAds(UIView *root) {
 }
 %end
 
-%hook UIView
-- (void)didMoveToWindow {
-    %orig;
-    if (!self.window) return;
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.25 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-        if (gAdBlockEnabled && self.window) ScanForAds(self.window.rootViewController.view);
-    });
-}
-%end
-
 %ctor {
     if (!IsTikTok()) return;
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ InstallSaveButton(); });
@@ -188,7 +178,7 @@ static void ScanForAds(UIView *root) {
     dispatch_source_set_timer(timer, dispatch_time(DISPATCH_TIME_NOW, 3 * NSEC_PER_SEC), 3 * NSEC_PER_SEC, 500 * NSEC_PER_MSEC);
     dispatch_source_set_event_handler(timer, ^{
         InstallSaveButton();
-        if (gAdBlockEnabled) { UIWindow *w = TopWindow(); if (w) ScanForAds(w.rootViewController.view); }
+        if (gAdBlockEnabled) { UIWindow *w = TopWindow(); if (w && w.rootViewController.view) ScanForAds(w.rootViewController.view); }
     });
     dispatch_resume(timer);
 }
