@@ -4,6 +4,7 @@
 #import <objc/message.h>
 
 void TikTokPlusInstallMuteButton(void);
+static void PTApplyCurrent(void);
 static BOOL gPrivateTikTokMuted=NO;
 static __weak id gCurrentFeedCell;
 static __weak id gCurrentPlayerController;
