@@ -46,17 +46,9 @@ static void ConfigureAudioMixing(void) {
     if (![currentCat isEqualToString:targetCat] || currentOpts != targetOpts) {
         NSError *err = nil;
         [s setCategory:targetCat mode:s.mode options:targetOpts error:&err];
-
-        // Re-activate so it re-evaluates interruptibility — otherwise the first
-        // activation under the old config keeps the music app paused.
-        if (s.otherAudioPlaying) {
-            NSError *deactErr = nil;
-            [s setActive:NO
-             withOptions:AVAudioSessionSetActivationOptionNotifyOthersOnDeactivation
-                   error:&deactErr];
-            NSError *actErr = nil;
-            [s setActive:YES withOptions:0 error:&actErr];
-        }
+        // No deactivate/reactivate here: forcing the session state every tick
+        // hijacks the audio focus and makes iOS fight other apps. iOS honours
+        // the new MixWithOthers option on the next natural activation.
     }
 }
 
@@ -314,9 +306,11 @@ static void InstallMuteButton(void) {
     gTrackedAudioPlayers = [NSHashTable weakObjectsHashTable];
     gTrackedEngines = [NSHashTable weakObjectsHashTable];
 
-    // Apply MixWithOthers immediately so we beat TikTok's first audio-session
-    // activation; otherwise iOS sees the wrong config and pauses the music app.
-    ConfigureAudioMixing();
+    // Defer one runloop tick so TikTok has a chance to set up its session
+    // first; then we adjust it (if needed) before TikTok's first activation.
+    dispatch_async(dispatch_get_main_queue(), ^{
+        ConfigureAudioMixing();
+    });
 
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         InstallMuteButton();
