@@ -1,5 +1,6 @@
 #import <UIKit/UIKit.h>
 #import <AVFoundation/AVFoundation.h>
+#import <stdarg.h>
 
 static BOOL gTikTokMuted = NO;
 static UIButton *gMuteButton = nil;
@@ -11,6 +12,23 @@ static NSHashTable<AVAudioMixerNode *> *gTrackedMixerNodes = nil;
 static NSHashTable<AVAudioEnvironmentNode *> *gTrackedEnvironmentNodes = nil;
 static NSHashTable<AVSampleBufferAudioRenderer *> *gTrackedSampleRenderers = nil;
 static dispatch_source_t gMuteTimer = nil;
+
+static void DebugLog(NSString *fmt, ...) {
+    va_list args;
+    va_start(args, fmt);
+    NSString *msg = [[NSString alloc] initWithFormat:fmt arguments:args];
+    va_end(args);
+    NSString *line = [NSString stringWithFormat:@"%@ %@\n", [NSDate date], msg];
+    NSString *path = @"/var/mobile/ttkplus_audio_debug.log";
+    NSFileHandle *fh = [NSFileHandle fileHandleForWritingAtPath:path];
+    if (!fh) {
+        [[NSFileManager defaultManager] createFileAtPath:path contents:nil attributes:nil];
+        fh = [NSFileHandle fileHandleForWritingAtPath:path];
+    }
+    [fh seekToEndOfFile];
+    [fh writeData:[line dataUsingEncoding:NSUTF8StringEncoding]];
+    [fh closeFile];
+}
 
 static BOOL IsTikTokAudio(void) {
     return [[[NSBundle mainBundle] bundleIdentifier] isEqualToString:@"com.zhiliaoapp.musically"];
@@ -35,39 +53,48 @@ static UIWindow *AudioTopWindow(void) {
 static void TrackPlayer(AVPlayer *player) {
     if (!player || !gTrackedPlayers) return;
     @synchronized (gTrackedPlayers) { [gTrackedPlayers addObject:player]; }
+    DebugLog(@"AVPlayer tracked: %@", player);
 }
 
 static void TrackAudioPlayer(AVAudioPlayer *player) {
     if (!player || !gTrackedAudioPlayers) return;
     @synchronized (gTrackedAudioPlayers) { [gTrackedAudioPlayers addObject:player]; }
+    DebugLog(@"AVAudioPlayer tracked: %@", player);
 }
 
 static void TrackEngine(AVAudioEngine *engine) {
     if (!engine || !gTrackedEngines) return;
     @synchronized (gTrackedEngines) { [gTrackedEngines addObject:engine]; }
+    DebugLog(@"AVAudioEngine tracked: %@", engine);
 }
 
 static void TrackPlayerNode(AVAudioPlayerNode *node) {
     if (!node || !gTrackedPlayerNodes) return;
     @synchronized (gTrackedPlayerNodes) { [gTrackedPlayerNodes addObject:node]; }
+    DebugLog(@"AVAudioPlayerNode tracked: %@", node);
 }
 
 static void TrackMixerNode(AVAudioMixerNode *node) {
     if (!node || !gTrackedMixerNodes) return;
     @synchronized (gTrackedMixerNodes) { [gTrackedMixerNodes addObject:node]; }
+    DebugLog(@"AVAudioMixerNode tracked: %@", node);
 }
 
 static void TrackEnvironmentNode(AVAudioEnvironmentNode *node) {
     if (!node || !gTrackedEnvironmentNodes) return;
     @synchronized (gTrackedEnvironmentNodes) { [gTrackedEnvironmentNodes addObject:node]; }
+    DebugLog(@"AVAudioEnvironmentNode tracked: %@", node);
 }
 
 static void TrackSampleRenderer(AVSampleBufferAudioRenderer *renderer) {
     if (!renderer || !gTrackedSampleRenderers) return;
     @synchronized (gTrackedSampleRenderers) { [gTrackedSampleRenderers addObject:renderer]; }
+    DebugLog(@"AVSampleBufferAudioRenderer tracked: %@", renderer);
 }
 
 static void ApplyMuteState(void) {
+    DebugLog(@"ApplyMuteState muted=%@", gTikTokMuted ? @"YES" : @"NO");
+
     if (gTrackedPlayers) {
         @synchronized (gTrackedPlayers) {
             for (AVPlayer *player in gTrackedPlayers.allObjects) {
@@ -140,6 +167,7 @@ static void ApplyMuteState(void) {
 @implementation TTKPlusAudioTarget
 - (void)tapMute:(id)sender {
     gTikTokMuted = !gTikTokMuted;
+    DebugLog(@"Mute button tapped -> muted=%@", gTikTokMuted ? @"YES" : @"NO");
     [gMuteButton setTitle:(gTikTokMuted ? @"UNMUTE" : @"MUTE") forState:UIControlStateNormal];
     ApplyMuteState();
 }
@@ -167,6 +195,7 @@ static void InstallMuteButton(void) {
         [b addTarget:gAudioTarget action:@selector(tapMute:) forControlEvents:UIControlEventTouchUpInside];
         [w addSubview:b];
         gMuteButton = b;
+        DebugLog(@"Mute button installed");
     });
 }
 
@@ -175,6 +204,7 @@ static void InstallMuteButton(void) {
     AVPlayer *player = %orig(URL);
     if (IsTikTokAudio()) {
         TrackPlayer(player);
+        DebugLog(@"playerWithURL: %@", URL);
         if (gTikTokMuted) {
             player.muted = YES;
             player.volume = 0.0f;
@@ -187,6 +217,7 @@ static void InstallMuteButton(void) {
     AVPlayer *player = %orig(item);
     if (IsTikTokAudio()) {
         TrackPlayer(player);
+        DebugLog(@"playerWithPlayerItem: %@", item);
         if (gTikTokMuted) {
             player.muted = YES;
             player.volume = 0.0f;
@@ -216,6 +247,7 @@ static void InstallMuteButton(void) {
 - (void)setVolume:(float)volume {
     if (IsTikTokAudio()) {
         TrackPlayer(self);
+        DebugLog(@"AVPlayer setVolume requested=%.3f muted=%@", volume, gTikTokMuted ? @"YES" : @"NO");
         if (gTikTokMuted) volume = 0.0f;
     }
     %orig(volume);
@@ -224,6 +256,7 @@ static void InstallMuteButton(void) {
 - (void)setMuted:(BOOL)muted {
     if (IsTikTokAudio()) {
         TrackPlayer(self);
+        DebugLog(@"AVPlayer setMuted requested=%@ global=%@", muted ? @"YES" : @"NO", gTikTokMuted ? @"YES" : @"NO");
         if (gTikTokMuted) muted = YES;
     }
     %orig(muted);
@@ -267,6 +300,7 @@ static void InstallMuteButton(void) {
 - (void)setVolume:(float)volume {
     if (IsTikTokAudio()) {
         TrackAudioPlayer(self);
+        DebugLog(@"AVAudioPlayer setVolume requested=%.3f muted=%@", volume, gTikTokMuted ? @"YES" : @"NO");
         if (gTikTokMuted) volume = 0.0f;
     }
     %orig(volume);
@@ -383,6 +417,8 @@ static void InstallMuteButton(void) {
     gTrackedMixerNodes = [NSHashTable weakObjectsHashTable];
     gTrackedEnvironmentNodes = [NSHashTable weakObjectsHashTable];
     gTrackedSampleRenderers = [NSHashTable weakObjectsHashTable];
+
+    DebugLog(@"TikTokPlus audio hooks initialized");
 
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         InstallMuteButton();
