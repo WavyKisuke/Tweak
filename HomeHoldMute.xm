@@ -3,6 +3,8 @@
 
 void TikTokPlusSetMuted(BOOL muted);
 
+static BOOL gHomeMuteState=NO;
+
 static BOOL TTHIsTikTok(void){
     NSString *b=NSBundle.mainBundle.bundleIdentifier.lowercaseString;
     return [b containsString:@"musically"] || [b containsString:@"tiktok"];
@@ -12,7 +14,10 @@ static BOOL TTHIsTikTok(void){
 @end
 @implementation TTHoldTarget
 - (void)homeHeld:(UILongPressGestureRecognizer *)g {
-    if(g.state==UIGestureRecognizerStateBegan) TikTokPlusSetMuted(NO);
+    if(g.state==UIGestureRecognizerStateBegan){
+        gHomeMuteState=!gHomeMuteState;
+        TikTokPlusSetMuted(gHomeMuteState);
+    }
 }
 @end
 
@@ -34,8 +39,8 @@ static BOOL TTHLooksLikeHome(UIView *v){
 static void TTHInstallOnView(UIView *v){
     if(!v || objc_getAssociatedObject(v,&kTTHoldInstalled)) return;
     if(!TTHLooksLikeHome(v)) return;
-    if(!gHoldTarget) gHoldTarget=[TTHoldTarget new];
-    UILongPressGestureRecognizer *g=[[UILongPressGestureRecognizer alloc] initWithTarget:gHoldTarget action:@selector(homeHeld:)];
+    if(!gHoldTarget)gHoldTarget=[TTHoldTarget new];
+    UILongPressGestureRecognizer *g=[[UILongPressGestureRecognizer alloc]initWithTarget:gHoldTarget action:@selector(homeHeld:)];
     g.minimumPressDuration=5.0;
     g.allowableMovement=25.0;
     [v addGestureRecognizer:g];
@@ -43,12 +48,12 @@ static void TTHInstallOnView(UIView *v){
 }
 
 static void TTHScan(UIView *root){
-    if(!root) return;
+    if(!root)return;
     NSMutableArray *stack=[NSMutableArray arrayWithObject:root];
     while(stack.count){
-        UIView *v=stack.lastObject; [stack removeLastObject];
+        UIView *v=stack.lastObject;[stack removeLastObject];
         TTHInstallOnView(v);
-        for(UIView *s in v.subviews) [stack addObject:s];
+        for(UIView *s in v.subviews)[stack addObject:s];
     }
 }
 
@@ -56,20 +61,20 @@ static void TTHRemoveOldButtons(UIView *root){
     if(!root)return;
     NSMutableArray *stack=[NSMutableArray arrayWithObject:root];
     while(stack.count){
-        UIView *v=stack.lastObject; [stack removeLastObject];
+        UIView *v=stack.lastObject;[stack removeLastObject];
         if(v.tag==190611 || ([v isKindOfClass:UIButton.class] && [[(UIButton *)v titleForState:UIControlStateNormal].lowercaseString isEqualToString:@"mute"]) || ([v isKindOfClass:UIButton.class] && [[(UIButton *)v titleForState:UIControlStateNormal].lowercaseString isEqualToString:@"unmute"]))){
-            v.hidden=YES; v.userInteractionEnabled=NO;
+            v.hidden=YES;v.userInteractionEnabled=NO;
         }
         if([v isKindOfClass:UIButton.class] && [[(UIButton *)v titleForState:UIControlStateNormal].lowercaseString isEqualToString:@"hd save"]){
-            v.hidden=YES; v.userInteractionEnabled=NO;
+            v.hidden=YES;v.userInteractionEnabled=NO;
         }
-        for(UIView *s in v.subviews) [stack addObject:s];
+        for(UIView *s in v.subviews)[stack addObject:s];
     }
 }
 
 static UIWindow *TTHWindow(void){
     for(UIWindow *w in UIApplication.sharedApplication.windows){
-        if(!w.hidden && w.alpha>.01 && w.windowLevel==UIWindowLevelNormal && w.rootViewController) return w;
+        if(!w.hidden&&w.alpha>.01&&w.windowLevel==UIWindowLevelNormal&&w.rootViewController)return w;
     }
     return nil;
 }
@@ -77,10 +82,8 @@ static UIWindow *TTHWindow(void){
 static void TTHInstall(void){
     if(!TTHIsTikTok())return;
     dispatch_async(dispatch_get_main_queue(),^{
-        UIWindow *w=TTHWindow();
-        if(!w)return;
-        TTHScan(w);
-        TTHRemoveOldButtons(w);
+        UIWindow *w=TTHWindow();if(!w)return;
+        TTHScan(w);TTHRemoveOldButtons(w);
     });
 }
 
