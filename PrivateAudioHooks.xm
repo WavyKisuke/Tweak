@@ -3,6 +3,8 @@
 #import <objc/runtime.h>
 #import <objc/message.h>
 
+void TikTokPlusInstallMuteButton(void);
+
 static BOOL gPrivateTikTokMuted = NO;
 
 static BOOL PTIsTikTok(void) {
@@ -53,7 +55,10 @@ static void PTScanObject(id root, NSInteger depth) {
 %hook AWEPlayVideoPlayerController
 - (void)playerWillLoopPlaying:(id)player {
     %orig;
-    if (PTIsTikTok() && gPrivateTikTokMuted) PTScanObject(player,0);
+    if (PTIsTikTok()) {
+        TikTokPlusInstallMuteButton();
+        if (gPrivateTikTokMuted) PTScanObject(player,0);
+    }
 }
 - (void)play {
     if (PTIsTikTok() && gPrivateTikTokMuted) {
@@ -73,11 +78,17 @@ static void PTScanObject(id root, NSInteger depth) {
 %hook AWEFeedCellViewController
 - (void)containerDidFullyDisplayWithReason:(NSInteger)reason {
     %orig;
-    if (PTIsTikTok() && gPrivateTikTokMuted) PTScanObject(self,0);
+    if (PTIsTikTok()) {
+        TikTokPlusInstallMuteButton();
+        if (gPrivateTikTokMuted) PTScanObject(self,0);
+    }
 }
 - (void)playerWillLoopPlaying:(id)player {
     %orig;
-    if (PTIsTikTok() && gPrivateTikTokMuted) PTScanObject(player,0);
+    if (PTIsTikTok()) {
+        TikTokPlusInstallMuteButton();
+        if (gPrivateTikTokMuted) PTScanObject(player,0);
+    }
 }
 %end
 
