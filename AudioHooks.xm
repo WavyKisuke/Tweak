@@ -65,8 +65,21 @@ static void ApplyAudioMuteToTracked(void) {
 
 static TTKPlusAudioTarget *gAudioTarget = nil;
 
+static BOOL ClassDeclaresSelector(Class cls, SEL sel) {
+    unsigned int count = 0;
+    Method *methods = class_copyMethodList(cls, &count);
+    BOOL found = NO;
+    for (unsigned int i = 0; i < count; i++) {
+        if (method_getName(methods[i]) == sel) { found = YES; break; }
+    }
+    free(methods);
+    return found;
+}
+
 static void HookVolume(Class cls) {
-    SEL sel = @selector(setVolume:); Method m = class_getInstanceMethod(cls, sel); if (!m) return;
+    SEL sel = @selector(setVolume:);
+    if (!ClassDeclaresSelector(cls, sel)) return;
+    Method m = class_getInstanceMethod(cls, sel); if (!m) return;
     IMP old = method_getImplementation(m);
     IMP repl = imp_implementationWithBlock(^(id self, float volume) {
         TrackAudioPlayer(self); if (gTikTokMuted) volume = 0.0f;
@@ -76,6 +89,7 @@ static void HookVolume(Class cls) {
 }
 
 static void HookMute(Class cls, SEL sel) {
+    if (!ClassDeclaresSelector(cls, sel)) return;
     Method m = class_getInstanceMethod(cls, sel); if (!m) return;
     IMP old = method_getImplementation(m);
     IMP repl = imp_implementationWithBlock(^(id self, BOOL mute) {
@@ -88,7 +102,7 @@ static void InstallAudioPlayerHooks(void) {
     NSArray *names = @[@"TTKECMMKVideoPlayer", @"BDXLynxVideoPlayerPro", @"IESMMBGAVPlayer", @"IESMMBGVideoPlayer", @"VEEffectVideoPlayer"];
     for (NSString *name in names) {
         Class cls = NSClassFromString(name); if (!cls || [gHookedClasses containsObject:name]) continue;
-        BOOL found = class_getInstanceMethod(cls, @selector(setVolume:)) || class_getInstanceMethod(cls, sel_registerName("mute:")) || class_getInstanceMethod(cls, sel_registerName("unfocusedMute:")) || class_getInstanceMethod(cls, sel_registerName("mutePlayer:"));
+        BOOL found = ClassDeclaresSelector(cls, @selector(setVolume:)) || ClassDeclaresSelector(cls, sel_registerName("mute:")) || ClassDeclaresSelector(cls, sel_registerName("unfocusedMute:")) || ClassDeclaresSelector(cls, sel_registerName("mutePlayer:"));
         if (!found) continue;
         HookVolume(cls); HookMute(cls, sel_registerName("mute:")); HookMute(cls, sel_registerName("unfocusedMute:")); HookMute(cls, sel_registerName("mutePlayer:"));
         [gHookedClasses addObject:name];
