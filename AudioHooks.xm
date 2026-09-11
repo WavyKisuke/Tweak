@@ -302,4 +302,3 @@ static void InstallMuteButton(void) {
     });
     dispatch_resume(gMuteTimer);
 }
-%end
