@@ -1,0 +1,102 @@
+name: Build TikTokPlus tweak
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      # Cache the entire Theos install (toolchain + SDK). Restoring this skips
+      # both the install-theos download and the api.github.com SDK fetch that
+      # was failing with the unauthenticated 60/hr rate limit.
+      - name: Cache Theos toolchain + SDKs
+        uses: actions/cache@v4
+        with:
+          path: ~/theos
+          key: theos-ubuntu24-v2-iphoneos14
+          restore-keys: |
+            theos-ubuntu24-v2-
+
+      - name: Install build dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y libplist-2.0-4 libplist-utils
+
+      - name: Install Theos + iOS SDK
+        shell: bash
+        env:
+          # Export GITHUB_TOKEN so install-sdk's inner api.github.com curl
+          # authenticates and avoids the 60/hr anonymous rate limit.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          export THEOS="$HOME/theos"
+          mkdir -p "$THEOS"
+
+          if [ ! -x "$THEOS/bin/make" ]; then
+            # install-theos clones theos, installs Linux build deps, and drops
+            # the Linux clang toolchain into toolchain/linux/iphone. Its SDK
+            # step calls api.github.com and exits 8 on rate-limit failure, so
+            # we tolerate that failure and fetch the SDK ourselves below.
+            bash -c "$(curl -fsSL https://raw.githubusercontent.com/theos/theos/master/bin/install-theos)" \
+              || echo "::warning::install-theos returned non-zero (likely SDK rate-limit); falling back to authenticated gh fetch"
+
+            if [ ! -d "$THEOS/sdks" ] || [ -z "$(ls -A "$THEOS/sdks" 2>/dev/null | grep sdk || true)" ]; then
+              mkdir -p "$THEOS/sdks"
+              echo "Fetching iOS SDK via authenticated gh CLI..."
+              LATEST_TAG="$(gh release view --repo theos/sdks --json tagName -q .tagName)"
+              mkdir -p /tmp/sdks
+              gh release download "$LATEST_TAG" --repo theos/sdks \
+                --pattern 'iPhoneOS*.sdk.tar.xz' \
+                --dir /tmp/sdks
+              for tar in /tmp/sdks/*.sdk.tar.xz; do
+                [ -f "$tar" ] || continue
+                tar -xJv -C "$THEOS/sdks" < "$tar"
+              done
+            fi
+          fi
+
+          if [ -z "$(ls -A "$THEOS/sdks" 2>/dev/null | grep sdk || true)" ]; then
+            echo "::error::No iOS SDK found under $THEOS/sdks after install."
+            exit 1
+          fi
+
+          echo "THEOS=$THEOS" >> "$GITHUB_ENV"
+          echo "$THEOS/bin" >> "$GITHUB_PATH"
+          echo "$THEOS/toolchain/linux/iphone/bin" >> "$GITHUB_PATH"
+          echo "THEOS_MAKE_PATH=$THEOS/makefiles" >> "$GITHUB_ENV"
+          ls "$THEOS/sdks"
+
+      - name: Build tweak
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x build.sh
+          ./build.sh
+
+      - name: Verify artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s dist/TikTokPlus.dylib
+          test -s dist/TikTokPlus.plist
+          ls -lh dist/
+
+      - name: Upload build
+        uses: actions/upload-artifact@v4
+        with:
+          name: TikTokPlus-build
+          path: dist/
+          if-no-files-found: error
+          retention-days: 14
