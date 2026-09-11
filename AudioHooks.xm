@@ -9,9 +9,7 @@ static NSHashTable *gPlayers;
 static NSHashTable *gAudioObjects;
 static NSMutableDictionary *gAVOriginals;
 
-static BOOL IsTikTok(void) {
-    return [[[NSBundle mainBundle] bundleIdentifier] isEqualToString:@"com.zhiliaoapp.musically"];
-}
+static BOOL IsTikTok(void) { return [[[NSBundle mainBundle] bundleIdentifier] isEqualToString:@"com.zhiliaoapp.musically"]; }
 
 static UIWindow *TopWindow(void) {
     if (@available(iOS 13.0, *)) {
@@ -52,8 +50,7 @@ void TikTokPlusSetMuted(BOOL muted) {
     [[NSNotificationCenter defaultCenter] postNotificationName:@"TikTokPlusMuteChanged" object:nil userInfo:@{@"muted":@(muted)}];
 }
 
-@interface TTKPlusAudioTarget : NSObject
-@end
+@interface TTKPlusAudioTarget : NSObject @end
 @implementation TTKPlusAudioTarget
 - (void)tapMute:(id)sender { TikTokPlusSetMuted(!gTikTokMuted); }
 @end
@@ -89,8 +86,8 @@ static void InstallMuteButton(void) {
 void TikTokPlusInstallMuteButton(void) { if (IsTikTok()) InstallMuteButton(); }
 
 static IMP OriginalFor(Class cls, SEL sel) {
-    if (!gAVOriginals) return NULL;
-    return [gAVOriginals[NSStringFromClass(cls) stringByAppendingFormat:@":%@", NSStringFromSelector(sel)] pointerValue];
+    NSValue *v = gAVOriginals[NSStringFromClass(cls) stringByAppendingFormat:@":%@", NSStringFromSelector(sel)];
+    return v ? (IMP)v.pointerValue : NULL;
 }
 
 static void SaveAndHook(Class cls, SEL sel, IMP replacement) {
@@ -104,28 +101,39 @@ static void SaveAndHook(Class cls, SEL sel, IMP replacement) {
     method_setImplementation(m, replacement);
 }
 
-static BOOL IsSubclassOf(Class cls, Class base) {
-    if (!cls || !base) return NO;
-    for (Class c = cls; c; c = class_getSuperclass(c)) if (c == base) return YES;
-    return NO;
+static BOOL ClassDefinesSelector(Class cls, SEL sel) {
+    unsigned int count = 0;
+    Method *methods = class_copyMethodList(cls, &count);
+    BOOL found = NO;
+    for (unsigned int i = 0; i < count; i++) {
+        if (method_getName(methods[i]) == sel) { found = YES; break; }
+    }
+    free(methods);
+    return found;
 }
+
+static IMP gSubclassPlayOriginal;
+static IMP gSubclassMutedOriginal;
+static IMP gSubclassVolumeOriginal;
 
 static void TTK_AVPlayerPlay(id self, SEL _cmd) {
     [gPlayers addObject:self];
     if (gTikTokMuted) ForceMuteObject(self);
     IMP orig = OriginalFor(NSClassFromString(@"AVPlayer"), @selector(play));
+    if (!orig) orig = gSubclassPlayOriginal;
     if (orig) ((void(*)(id,SEL))orig)(self,_cmd);
     if (gTikTokMuted) ForceMuteObject(self);
 }
 static void TTK_AVPlayerSetMuted(id self, SEL _cmd, BOOL muted) {
     if (gTikTokMuted) muted = YES;
     IMP orig = OriginalFor(NSClassFromString(@"AVPlayer"), @selector(setMuted:));
-    if (!orig) orig = class_getMethodImplementation(NSClassFromString(@"AVPlayer"), _cmd);
+    if (!orig) orig = gSubclassMutedOriginal;
     if (orig) ((void(*)(id,SEL,BOOL))orig)(self,_cmd,muted);
 }
 static void TTK_AVPlayerSetVolume(id self, SEL _cmd, float volume) {
     if (gTikTokMuted) volume = 0.0f;
     IMP orig = OriginalFor(NSClassFromString(@"AVPlayer"), @selector(setVolume:));
+    if (!orig) orig = gSubclassVolumeOriginal;
     if (orig) ((void(*)(id,SEL,float))orig)(self,_cmd,volume);
 }
 static void TTK_AVAudioPlayerPlay(id self, SEL _cmd) {
@@ -191,18 +199,7 @@ static void InstallAVHooks(void) {
     SaveAndHook(player,@selector(setMuted:),(IMP)TTK_AVPlayerSetMuted);
     SaveAndHook(player,@selector(setVolume:),(IMP)TTK_AVPlayerSetVolume);
 
-    Class audioPlayer = NSClassFromString(@"AVAudioPlayer");
-    SaveAndHook(audioPlayer,@selector(play),(IMP)TTK_AVAudioPlayerPlay);
-    SaveAndHook(audioPlayer,@selector(setVolume:),(IMP)TTK_AVAudioPlayerSetVolume);
-    SaveAndHook(NSClassFromString(@"AVAudioPlayerNode"),@selector(play),(IMP)TTK_AVAudioPlayerNodePlay);
-    SaveAndHook(NSClassFromString(@"AVAudioMixerNode"),@selector(setOutputVolume:),(IMP)TTK_AVAudioMixerSetOutputVolume);
-    SaveAndHook(NSClassFromString(@"AVAudioEnvironmentNode"),@selector(setOutputVolume:),(IMP)TTK_AVAudioEnvironmentSetOutputVolume);
-    SaveAndHook(NSClassFromString(@"AVSampleBufferAudioRenderer"),@selector(play),(IMP)TTK_AVSamplePlay);
-    SaveAndHook(NSClassFromString(@"AVSampleBufferAudioRenderer"),@selector(setMuted:),(IMP)TTK_AVSampleSetMuted);
-    SaveAndHook(NSClassFromString(@"AVSampleBufferAudioRenderer"),@selector(setVolume:),(IMP)TTK_AVSampleSetVolume);
-    SaveAndHook(NSClassFromString(@"AVAudioEngine"),@selector(startAndReturnError:),(IMP)TTK_AVAudioEngineStart);
-
-    // TikTok may use AVPlayer subclasses that override these methods.
+    // Hook AVPlayer subclasses only when they actually implement the selector themselves.
     if (player) {
         int count = objc_getClassList(NULL,0);
         if (count > 0) {
@@ -211,27 +208,43 @@ static void InstallAVHooks(void) {
             for (int i=0;i<count;i++) {
                 Class cls = classes[i];
                 if (cls == player || !IsSubclassOf(cls,player)) continue;
-                Method play = class_getInstanceMethod(cls,@selector(play));
-                Method muted = class_getInstanceMethod(cls,@selector(setMuted:));
-                Method volume = class_getInstanceMethod(cls,@selector(setVolume:));
-                if (play && class_getMethodImplementation(cls,@selector(play)) != method_getImplementation(play)) method_setImplementation(play,(IMP)TTK_AVPlayerPlay);
-                if (muted && class_getMethodImplementation(cls,@selector(setMuted:)) != method_getImplementation(muted)) method_setImplementation(muted,(IMP)TTK_AVPlayerSetMuted);
-                if (volume && class_getMethodImplementation(cls,@selector(setVolume:)) != method_getImplementation(volume)) method_setImplementation(volume,(IMP)TTK_AVPlayerSetVolume);
+                if (ClassDefinesSelector(cls,@selector(play))) {
+                    NSString *key=[NSStringFromClass(cls) stringByAppendingFormat:@":play"];
+                    if (!gAVOriginals[key]) { IMP o=class_getMethodImplementation(cls,@selector(play)); gAVOriginals[key]=[NSValue valueWithPointer:o]; method_setImplementation(class_getInstanceMethod(cls,@selector(play)),(IMP)TTK_AVPlayerPlay); }
+                }
+                if (ClassDefinesSelector(cls,@selector(setMuted:))) {
+                    NSString *key=[NSStringFromClass(cls) stringByAppendingFormat:@":setMuted:"];
+                    if (!gAVOriginals[key]) { IMP o=class_getMethodImplementation(cls,@selector(setMuted:)); gAVOriginals[key]=[NSValue valueWithPointer:o]; method_setImplementation(class_getInstanceMethod(cls,@selector(setMuted:)),(IMP)TTK_AVPlayerSetMuted); }
+                }
+                if (ClassDefinesSelector(cls,@selector(setVolume:))) {
+                    NSString *key=[NSStringFromClass(cls) stringByAppendingFormat:@":setVolume:"];
+                    if (!gAVOriginals[key]) { IMP o=class_getMethodImplementation(cls,@selector(setVolume:)); gAVOriginals[key]=[NSValue valueWithPointer:o]; method_setImplementation(class_getInstanceMethod(cls,@selector(setVolume:)),(IMP)TTK_AVPlayerSetVolume); }
+                }
             }
             free(classes);
         }
     }
+
+    SaveAndHook(NSClassFromString(@"AVAudioPlayer"),@selector(play),(IMP)TTK_AVAudioPlayerPlay);
+    SaveAndHook(NSClassFromString(@"AVAudioPlayer"),@selector(setVolume:),(IMP)TTK_AVAudioPlayerSetVolume);
+    SaveAndHook(NSClassFromString(@"AVAudioPlayerNode"),@selector(play),(IMP)TTK_AVAudioPlayerNodePlay);
+    SaveAndHook(NSClassFromString(@"AVAudioMixerNode"),@selector(setOutputVolume:),(IMP)TTK_AVAudioMixerSetOutputVolume);
+    SaveAndHook(NSClassFromString(@"AVAudioEnvironmentNode"),@selector(setOutputVolume:),(IMP)TTK_AVAudioEnvironmentSetOutputVolume);
+    SaveAndHook(NSClassFromString(@"AVSampleBufferAudioRenderer"),@selector(play),(IMP)TTK_AVSamplePlay);
+    SaveAndHook(NSClassFromString(@"AVSampleBufferAudioRenderer"),@selector(setMuted:),(IMP)TTK_AVSampleSetMuted);
+    SaveAndHook(NSClassFromString(@"AVSampleBufferAudioRenderer"),@selector(setVolume:),(IMP)TTK_AVSampleSetVolume);
+    SaveAndHook(NSClassFromString(@"AVAudioEngine"),@selector(startAndReturnError:),(IMP)TTK_AVAudioEngineStart);
 }
 
 %ctor {
     if (!IsTikTok()) return;
-    gPlayers = [NSHashTable weakObjectsHashTable];
-    gAudioObjects = [NSHashTable weakObjectsHashTable];
-    gAVOriginals = [NSMutableDictionary dictionary];
+    gPlayers=[NSHashTable weakObjectsHashTable];
+    gAudioObjects=[NSHashTable weakObjectsHashTable];
+    gAVOriginals=[NSMutableDictionary dictionary];
     InstallAVHooks();
-    dispatch_async(dispatch_get_main_queue(), ^{ InstallMuteButton(); });
-    dispatch_source_t timer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER,0,0,dispatch_get_main_queue());
+    dispatch_async(dispatch_get_main_queue(),^{ InstallMuteButton(); });
+    dispatch_source_t timer=dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER,0,0,dispatch_get_main_queue());
     dispatch_source_set_timer(timer,dispatch_time(DISPATCH_TIME_NOW,NSEC_PER_SEC),NSEC_PER_SEC,100*NSEC_PER_MSEC);
-    dispatch_source_set_event_handler(timer,^{ InstallAVHooks(); InstallMuteButton(); if (gTikTokMuted) ApplyMuteState(); });
+    dispatch_source_set_event_handler(timer,^{ InstallAVHooks(); InstallMuteButton(); if(gTikTokMuted) ApplyMuteState(); });
     dispatch_resume(timer);
 }
