@@ -93,10 +93,7 @@ static void PTPlayerLoop(id self, SEL sel, id player) {
     if (orig) ((void(*)(id,SEL,id))orig)(self,sel,player);
     if (PTIsTikTok()) {
         TikTokPlusInstallMuteButton();
-        if (gPrivateTikTokMuted) {
-            PTForceObject(self);
-            PTScanObject(player,0);
-        }
+        if (gPrivateTikTokMuted) { PTForceObject(self); PTScanObject(player,0); }
     }
 }
 
@@ -131,11 +128,15 @@ static void InstallPrivateHooks(void) {
     NSArray *boolSelectors = @[@"setMuted:",@"setMute:",@"setAudioMuted:"];
     NSArray *floatSelectors = @[@"setVolume:",@"setAudioVolume:",@"setPlayerVolume:"];
     NSArray *voidSelectors = @[@"mute"];
-    for (Class cls in @[controller ?: (Class)Nil, cell ?: (Class)Nil]) {
-        if (!cls) continue;
-        for (NSString *name in boolSelectors) PTInstall(cls,NSSelectorFromString(name),(IMP)PTSetBool);
-        for (NSString *name in floatSelectors) PTInstall(cls,NSSelectorFromString(name),(IMP)PTSetFloat);
-        for (NSString *name in voidSelectors) PTInstall(cls,NSSelectorFromString(name),(IMP)PTMute);
+    if (controller) {
+        for (NSString *name in boolSelectors) PTInstall(controller,NSSelectorFromString(name),(IMP)PTSetBool);
+        for (NSString *name in floatSelectors) PTInstall(controller,NSSelectorFromString(name),(IMP)PTSetFloat);
+        for (NSString *name in voidSelectors) PTInstall(controller,NSSelectorFromString(name),(IMP)PTMute);
+    }
+    if (cell) {
+        for (NSString *name in boolSelectors) PTInstall(cell,NSSelectorFromString(name),(IMP)PTSetBool);
+        for (NSString *name in floatSelectors) PTInstall(cell,NSSelectorFromString(name),(IMP)PTSetFloat);
+        for (NSString *name in voidSelectors) PTInstall(cell,NSSelectorFromString(name),(IMP)PTMute);
     }
 }
 
@@ -161,10 +162,6 @@ static void PTApplyCurrent(void) {
     });
     dispatch_source_t timer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER,0,0,dispatch_get_main_queue());
     dispatch_source_set_timer(timer,dispatch_time(DISPATCH_TIME_NOW,NSEC_PER_SEC),NSEC_PER_SEC,100*NSEC_PER_MSEC);
-    dispatch_source_set_event_handler(timer,^{
-        InstallPrivateHooks();
-        TikTokPlusInstallMuteButton();
-        if (gPrivateTikTokMuted) PTApplyCurrent();
-    });
+    dispatch_source_set_event_handler(timer,^{ InstallPrivateHooks(); TikTokPlusInstallMuteButton(); if (gPrivateTikTokMuted) PTApplyCurrent(); });
     dispatch_resume(timer);
 }
