@@ -46,10 +46,24 @@ static void ForceMuteObject(id o){
     if([o respondsToSelector:@selector(setOutputVolume:)]) [o setOutputVolume:0.0f];
 }
 
+static void RestoreAudioObject(id o){
+    if(!o || gTikTokMuted) return;
+    if([o respondsToSelector:@selector(setMuted:)]) [o setMuted:NO];
+    if([o respondsToSelector:@selector(setVolume:)] && [o respondsToSelector:@selector(volume)]) {
+        @try { if([(NSNumber *)[o valueForKey:@"volume"] floatValue] <= 0.001f) [o setVolume:1.0f]; } @catch(__unused NSException *e) {}
+    }
+    if([o respondsToSelector:@selector(setOutputVolume:)] && [o respondsToSelector:@selector(outputVolume)]) {
+        @try { if([(NSNumber *)[o valueForKey:@"outputVolume"] floatValue] <= 0.001f) [o setOutputVolume:1.0f]; } @catch(__unused NSException *e) {}
+    }
+}
+
 static void ApplyMuteState(void){
-    if(!gTikTokMuted) return;
-    for(id o in gPlayers.allObjects) ForceMuteObject(o);
-    for(id o in gAudioObjects.allObjects) ForceMuteObject(o);
+    for(id o in gPlayers.allObjects) {
+        if(gTikTokMuted) ForceMuteObject(o); else RestoreAudioObject(o);
+    }
+    for(id o in gAudioObjects.allObjects) {
+        if(gTikTokMuted) ForceMuteObject(o); else RestoreAudioObject(o);
+    }
 }
 
 void TikTokPlusSetMuted(BOOL muted){
@@ -138,22 +152,26 @@ static void SaveAndHook(Class c,SEL s,IMP r){
 
 static void TTKPlay(id self,SEL sel){
     [gPlayers addObject:self];
+    [gAudioObjects addObject:self];
     if(gTikTokMuted) ForceMuteObject(self);
     IMP o=AVOriginal(self,sel);
     if(o)((void(*)(id,SEL))o)(self,sel);
     if(gTikTokMuted) ForceMuteObject(self);
 }
 static void TTKSetMuted(id self,SEL sel,BOOL v){
+    [gAudioObjects addObject:self];
     if(gTikTokMuted) v=YES;
     IMP o=AVOriginal(self,sel);
     if(o)((void(*)(id,SEL,BOOL))o)(self,sel,v);
 }
 static void TTKSetVolume(id self,SEL sel,float v){
+    [gAudioObjects addObject:self];
     if(gTikTokMuted) v=0.0f;
     IMP o=AVOriginal(self,sel);
     if(o)((void(*)(id,SEL,float))o)(self,sel,v);
 }
 static void TTKEngine(id self,SEL sel,NSError **e){
+    [gAudioObjects addObject:self];
     IMP o=AVOriginal(self,sel);
     if(o)((BOOL(*)(id,SEL,NSError**))o)(self,sel,e);
     if(gTikTokMuted && [self respondsToSelector:@selector(mainMixerNode)])
@@ -193,7 +211,7 @@ static void InstallAVHooks(void){
         InstallAVHooks();
         InstallMuteButton();
         EnsureBackgroundMusicMixing();
-        if(gTikTokMuted) ApplyMuteState();
+        ApplyMuteState();
     });
     dispatch_resume(t);
 }
