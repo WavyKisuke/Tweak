@@ -6,7 +6,6 @@ static UIButton *gMuteButton = nil;
 static NSHashTable<AVPlayer *> *gTrackedPlayers = nil;
 static NSHashTable<AVAudioPlayer *> *gTrackedAudioPlayers = nil;
 static NSHashTable<AVAudioEngine *> *gTrackedEngines = nil;
-static AVAudioSession *gAudioSession = nil;
 static dispatch_source_t gMuteTimer = nil;
 
 static BOOL IsTikTokAudio(void) {
@@ -44,20 +43,13 @@ static void TrackEngine(AVAudioEngine *engine) {
     @synchronized (gTrackedEngines) { [gTrackedEngines addObject:engine]; }
 }
 
-static void SilenceAudioSession(void) {
-    if (!gTikTokMuted || !gAudioSession) return;
-    // Deactivating the app's audio session is a stronger fallback for TikTok's
-    // custom/native playback paths that don't honor AVPlayer.muted.
-    [gAudioSession setActive:NO withOptions:AVAudioSessionSetActiveOptionNotifyOthersOnDeactivation error:nil];
-}
-
 static void ApplyMuteState(void) {
     if (gTrackedPlayers) {
         @synchronized (gTrackedPlayers) {
             for (AVPlayer *player in gTrackedPlayers.allObjects) {
                 if (![player isKindOfClass:[AVPlayer class]]) continue;
                 player.muted = gTikTokMuted;
-                [player setVolume:(gTikTokMuted ? 0.0f : 1.0f)];
+                [player setVolume:gTikTokMuted ? 0.0f : 1.0f];
             }
         }
     }
@@ -79,8 +71,6 @@ static void ApplyMuteState(void) {
             }
         }
     }
-
-    SilenceAudioSession();
 }
 
 @interface TTKPlusAudioTarget : NSObject
@@ -118,22 +108,6 @@ static void InstallMuteButton(void) {
         gMuteButton = b;
     });
 }
-
-%hook AVAudioSession
-- (instancetype)init {
-    AVAudioSession *session = %orig;
-    if (IsTikTokAudio()) gAudioSession = session;
-    return session;
-}
-
-- (BOOL)setActive:(BOOL)active withOptions:(AVAudioSessionSetActiveOptions)options error:(NSError **)outError {
-    if (IsTikTokAudio()) {
-        gAudioSession = self;
-        if (gTikTokMuted) active = NO;
-    }
-    return %orig(active, options, outError);
-}
-%end
 
 %hook AVPlayer
 - (instancetype)init {
@@ -236,20 +210,12 @@ static void InstallMuteButton(void) {
 }
 %end
 
-%hook AVAudioMixingDestination
-- (void)setVolume:(float)volume {
-    if (IsTikTokAudio() && gTikTokMuted) volume = 0.0f;
-    %orig(volume);
-}
-%end
-
 %ctor {
     if (!IsTikTokAudio()) return;
 
     gTrackedPlayers = [NSHashTable weakObjectsHashTable];
     gTrackedAudioPlayers = [NSHashTable weakObjectsHashTable];
     gTrackedEngines = [NSHashTable weakObjectsHashTable];
-    gAudioSession = [AVAudioSession sharedInstance];
 
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         InstallMuteButton();
