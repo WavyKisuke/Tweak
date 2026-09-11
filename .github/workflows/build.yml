@@ -1,4 +1,4 @@
-name: Build TikTokAudioMix tweak
+name: Build TikTokPlus tweak
 
 on:
   workflow_dispatch:
@@ -45,14 +45,14 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test -s dist/TikTokAudioMix.dylib
-          test -s dist/TikTokAudioMix.plist
+          test -s dist/TikTokPlus.dylib
+          test -s dist/TikTokPlus.plist
           ls -lh dist/
 
       - name: Upload build
         uses: actions/upload-artifact@v4
         with:
-          name: TikTokAudioMix-build
+          name: TikTokPlus-build
           path: dist/
           if-no-files-found: error
           retention-days: 14
