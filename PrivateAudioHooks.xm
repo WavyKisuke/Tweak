@@ -65,31 +65,45 @@ static void PTInstall(Class cls, SEL sel, IMP replacement) {
     if (!method) return;
     NSString *key = PTKey(cls,sel);
     if (gOriginalIMPs[key]) return;
-    gOriginalIMPs[key] = [NSValue valueWithPointer:method_getImplementation(method)];
+    IMP original = method_getImplementation(method);
+    gOriginalIMPs[key] = [NSValue valueWithBytes:&original objCType:@encode(IMP)];
     method_setImplementation(method,replacement);
+}
+
+static IMP PTOriginalForSelf(id self, SEL sel) {
+    Class cls = object_getClass(self);
+    IMP orig = PTOriginal(cls,sel);
+    if (orig) return orig;
+    Class superCls = class_getSuperclass(cls);
+    while (superCls) {
+        orig = PTOriginal(superCls,sel);
+        if (orig) return orig;
+        superCls = class_getSuperclass(superCls);
+    }
+    return NULL;
 }
 
 static void PTSetBool(id self, SEL sel, BOOL value) {
     if (gPrivateTikTokMuted) value = YES;
-    IMP orig = PTOriginal(object_getClass(self),sel);
+    IMP orig = PTOriginalForSelf(self,sel);
     if (orig) ((void(*)(id,SEL,BOOL))orig)(self,sel,value);
 }
 
 static void PTSetFloat(id self, SEL sel, float value) {
     if (gPrivateTikTokMuted) value = 0.0f;
-    IMP orig = PTOriginal(object_getClass(self),sel);
+    IMP orig = PTOriginalForSelf(self,sel);
     if (orig) ((void(*)(id,SEL,float))orig)(self,sel,value);
 }
 
 static void PTMute(id self, SEL sel) {
-    IMP orig = PTOriginal(object_getClass(self),sel);
+    IMP orig = PTOriginalForSelf(self,sel);
     if (orig) ((void(*)(id,SEL))orig)(self,sel);
 }
 
 static void PTPlayerLoop(id self, SEL sel, id player) {
     gCurrentPlayerController = self;
     gCurrentPlayer = player;
-    IMP orig = PTOriginal(object_getClass(self),sel);
+    IMP orig = PTOriginalForSelf(self,sel);
     if (orig) ((void(*)(id,SEL,id))orig)(self,sel,player);
     if (PTIsTikTok()) {
         TikTokPlusInstallMuteButton();
@@ -99,7 +113,7 @@ static void PTPlayerLoop(id self, SEL sel, id player) {
 
 static void PTFeedDisplay(id self, SEL sel, NSInteger reason) {
     gCurrentFeedCell = self;
-    IMP orig = PTOriginal(object_getClass(self),sel);
+    IMP orig = PTOriginalForSelf(self,sel);
     if (orig) ((void(*)(id,SEL,NSInteger))orig)(self,sel,reason);
     if (PTIsTikTok()) {
         TikTokPlusInstallMuteButton();
@@ -110,7 +124,7 @@ static void PTFeedDisplay(id self, SEL sel, NSInteger reason) {
 static void PTControllerPlay(id self, SEL sel) {
     gCurrentPlayerController = self;
     if (PTIsTikTok() && gPrivateTikTokMuted) PTForceObject(self);
-    IMP orig = PTOriginal(object_getClass(self),sel);
+    IMP orig = PTOriginalForSelf(self,sel);
     if (orig) ((void(*)(id,SEL))orig)(self,sel);
     if (PTIsTikTok() && gPrivateTikTokMuted) PTScanObject(self,0);
 }
