@@ -13,20 +13,19 @@ mkdir -p dist
 
 make clean package FINALPACKAGE=1 STRIP=1
 
-for name in TikTokAudioMix TikTokPlus; do
-  DYLIB="$(find .theos -type f -name "${name}.dylib" -print -quit 2>/dev/null || true)"
-  if [ -z "$DYLIB" ]; then
-    echo "ERROR: ${name}.dylib was not produced" >&2
-    find packages .theos -type f \( -name '*.dylib' -o -name '*.deb' \) -print 2>/dev/null || true
-    exit 1
-  fi
-  cp "$DYLIB" "dist/${name}.dylib"
-  cp "${name}.plist" "dist/${name}.plist"
-  test -s "dist/${name}.dylib"
-  test -s "dist/${name}.plist"
-done
+DYLIB="$(find .theos -type f -name 'TikTokPlus.dylib' -print -quit 2>/dev/null || true)"
+if [ -z "$DYLIB" ]; then
+  echo "ERROR: TikTokPlus.dylib was not produced" >&2
+  find packages .theos -type f \( -name '*.dylib' -o -name '*.deb' \) -print 2>/dev/null || true
+  exit 1
+fi
 
+cp "$DYLIB" dist/TikTokPlus.dylib
+cp TikTokPlus.plist dist/TikTokPlus.plist
 cp packages/*.deb dist/ 2>/dev/null || true
+
+test -s dist/TikTokPlus.dylib
+test -s dist/TikTokPlus.plist
 
 echo "=== BUILD SUCCESS ==="
 ls -lh dist/
