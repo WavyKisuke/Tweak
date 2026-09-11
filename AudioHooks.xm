@@ -21,21 +21,36 @@ static UIWindowScene *ActiveScene(void) {
     return nil;
 }
 
-static UIWindow *TopWindow(void) {
-    UIWindowScene *scene = ActiveScene();
-    if (!scene) return nil;
-    UIWindow *fallback = nil;
-    for (UIWindow *window in scene.windows) {
-        if (window.hidden || window.alpha <= 0.01 || !window.rootViewController) continue;
-        if (!fallback) fallback = window;
-        if (window.isKeyWindow) return window;
-    }
-    return fallback;
-}
-
 static NSString *AVKey(Class cls, SEL sel) { return [NSString stringWithFormat:@"%p:%@",cls,NSStringFromSelector(sel)]; }
 static IMP AVOriginal(id self, SEL sel) { Class cls=object_getClass(self); while(cls){ NSValue *v=gAVOriginals[AVKey(cls,sel)]; if(v){ IMP p=NULL; [v getValue:&p]; return p; } cls=class_getSuperclass(cls); } return NULL; }
-static void ForceMuteObject(id object) { if(!object||!gTikTokMuted)return; if([object respondsToSelector:@selector(setMuted:)]) [object setMuted:YES]; if([object respondsToSelector:@selector(setVolume:)]) [object setVolume:0.0f]; if([object respondsToSelector:@selector(setOutputVolume:)]) [object setOutputVolume:0.0f]; }
+
+// Adapted behavior from PleaseDontStopTheMusic: keep TikTok's audio session
+// cooperative with an already-playing music app. We never deactivate the
+// session, and we never change the background app's session.
+static void EnsureBackgroundMusicMixing(void) {
+    if (!IsTikTok()) return;
+    AVAudioSession *s = [AVAudioSession sharedInstance];
+    AVAudioSessionCategoryOptions options = s.categoryOptions;
+    if (options & AVAudioSessionCategoryOptionMixWithOthers) return;
+    NSString *category = s.category;
+    if (!category.length) return;
+    NSError *error = nil;
+    BOOL ok = [s setCategory:category mode:s.mode options:(options | AVAudioSessionCategoryOptionMixWithOthers) error:&error];
+    if (!ok) {
+        // Some TikTok versions expose a SoloAmbient category that cannot be
+        // combined directly; use Ambient without touching session activation.
+        if ([category isEqualToString:AVAudioSessionCategorySoloAmbient]) {
+            [s setCategory:AVAudioSessionCategoryAmbient mode:s.mode options:(options | AVAudioSessionCategoryOptionMixWithOthers) error:nil];
+        }
+    }
+}
+
+static void ForceMuteObject(id object) {
+    if(!object||!gTikTokMuted)return;
+    if([object respondsToSelector:@selector(setMuted:)]) [object setMuted:YES];
+    if([object respondsToSelector:@selector(setVolume:)]) [object setVolume:0.0f];
+    if([object respondsToSelector:@selector(setOutputVolume:)]) [object setOutputVolume:0.0f];
+}
 static void ApplyMuteState(void) { if(!gTikTokMuted)return; for(id o in gPlayers.allObjects)ForceMuteObject(o); for(id o in gAudioObjects.allObjects)ForceMuteObject(o); }
 
 void TikTokPlusSetMuted(BOOL muted) {
@@ -44,6 +59,9 @@ void TikTokPlusSetMuted(BOOL muted) {
     dispatch_async(dispatch_get_main_queue(),^{
         [gMuteButton setTitle:gTikTokMuted?@"UNMUTE":@"MUTE" forState:UIControlStateNormal];
     });
+    // Always keep TikTok cooperative with background audio. Muting is
+    // player-specific; the session itself is never deactivated.
+    EnsureBackgroundMusicMixing();
     ApplyMuteState();
     [[NSNotificationCenter defaultCenter] postNotificationName:@"TikTokPlusMuteChanged" object:nil userInfo:@{@"muted":@(muted)}];
 }
@@ -108,4 +126,4 @@ static BOOL TTK_AVAudioEngineStart(id self,SEL cmd,NSError **error){IMP o=AVOrig
 static BOOL IsSubclassOf(Class cls,Class parent){while(cls){if(cls==parent)return YES;cls=class_getSuperclass(cls);}return NO;}
 static BOOL ClassDefinesSelector(Class cls,SEL sel){unsigned int n=0;Method *ms=class_copyMethodList(cls,&n);BOOL found=NO;for(unsigned int i=0;i<n;i++)if(method_getName(ms[i])==sel){found=YES;break;}free(ms);return found;}
 static void InstallAVHooks(void){Class player=NSClassFromString(@"AVPlayer");SaveAndHook(player,@selector(play),(IMP)TTK_AVPlayerPlay);SaveAndHook(player,@selector(setMuted:),(IMP)TTK_AVPlayerSetMuted);SaveAndHook(player,@selector(setVolume:),(IMP)TTK_AVPlayerSetVolume);if(player){int count=objc_getClassList(NULL,0);if(count>0){Class *classes=(Class*)malloc(sizeof(Class)*count);count=objc_getClassList(classes,count);for(int i=0;i<count;i++){Class cls=classes[i];if(cls==player||!IsSubclassOf(cls,player))continue;if(ClassDefinesSelector(cls,@selector(play)))SaveAndHook(cls,@selector(play),(IMP)TTK_AVPlayerPlay);if(ClassDefinesSelector(cls,@selector(setMuted:)))SaveAndHook(cls,@selector(setMuted:),(IMP)TTK_AVPlayerSetMuted);if(ClassDefinesSelector(cls,@selector(setVolume:)))SaveAndHook(cls,@selector(setVolume:),(IMP)TTK_AVPlayerSetVolume);}free(classes);}}SaveAndHook(NSClassFromString(@"AVAudioPlayer"),@selector(play),(IMP)TTK_AVAudioPlayerPlay);SaveAndHook(NSClassFromString(@"AVAudioPlayer"),@selector(setVolume:),(IMP)TTK_AVAudioPlayerSetVolume);SaveAndHook(NSClassFromString(@"AVAudioPlayerNode"),@selector(play),(IMP)TTK_AVAudioPlayerNodePlay);SaveAndHook(NSClassFromString(@"AVAudioMixerNode"),@selector(setOutputVolume:),(IMP)TTK_AVAudioMixerSetOutputVolume);SaveAndHook(NSClassFromString(@"AVAudioEnvironmentNode"),@selector(setOutputVolume:),(IMP)TTK_AVAudioEnvironmentSetOutputVolume);SaveAndHook(NSClassFromString(@"AVSampleBufferAudioRenderer"),@selector(play),(IMP)TTK_AVSamplePlay);SaveAndHook(NSClassFromString(@"AVSampleBufferAudioRenderer"),@selector(setMuted:),(IMP)TTK_AVSampleSetMuted);SaveAndHook(NSClassFromString(@"AVSampleBufferAudioRenderer"),@selector(setVolume:),(IMP)TTK_AVSampleSetVolume);SaveAndHook(NSClassFromString(@"AVAudioEngine"),@selector(startAndReturnError:),(IMP)TTK_AVAudioEngineStart);}
-%ctor {if(!IsTikTok())return;gPlayers=[NSHashTable weakObjectsHashTable];gAudioObjects=[NSHashTable weakObjectsHashTable];gAVOriginals=[NSMutableDictionary dictionary];InstallAVHooks();dispatch_async(dispatch_get_main_queue(),^{InstallMuteButton();});dispatch_source_t timer=dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER,0,0,dispatch_get_main_queue());dispatch_source_set_timer(timer,dispatch_time(DISPATCH_TIME_NOW,NSEC_PER_SEC),NSEC_PER_SEC,100*NSEC_PER_MSEC);dispatch_source_set_event_handler(timer,^{InstallAVHooks();InstallMuteButton();if(gTikTokMuted)ApplyMuteState();});dispatch_resume(timer);}
+%ctor {if(!IsTikTok())return;gPlayers=[NSHashTable weakObjectsHashTable];gAudioObjects=[NSHashTable weakObjectsHashTable];gAVOriginals=[NSMutableDictionary dictionary];InstallAVHooks();EnsureBackgroundMusicMixing();dispatch_async(dispatch_get_main_queue(),^{InstallMuteButton();});dispatch_source_t timer=dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER,0,0,dispatch_get_main_queue());dispatch_source_set_timer(timer,dispatch_time(DISPATCH_TIME_NOW,NSEC_PER_SEC),NSEC_PERSEC,100*NSEC_PER_MSEC);dispatch_source_set_event_handler(timer,^{InstallAVHooks();InstallMuteButton();EnsureBackgroundMusicMixing();if(gTikTokMuted)ApplyMuteState();});dispatch_resume(timer);}
