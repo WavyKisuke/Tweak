@@ -1,0 +1,25 @@
+PHONE-ONLY SETUP
+
+This ZIP contains the COMPLETE repository layout.
+
+Upload the CONTENTS of this ZIP to the ROOT of your GitHub repository.
+
+Required files:
+  .devcontainer/devcontainer.json
+  .github/workflows/build.yml
+  Makefile
+  TikTokAudioMix.plist
+  Tweak.xm
+  build.sh
+  README.md
+
+Then:
+  GitHub -> Actions -> Build TikTokAudioMix tweak -> Run workflow
+
+If iPhone Files does not display the .devcontainer or .github folders,
+create these two files directly on GitHub using "Create new file":
+
+  .devcontainer/devcontainer.json
+  .github/workflows/build.yml
+
+The exact contents are also supplied as separate downloads.
