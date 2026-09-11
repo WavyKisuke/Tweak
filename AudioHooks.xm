@@ -5,7 +5,9 @@ static BOOL gTikTokMuted = NO;
 static UIButton *gMuteButton;
 static NSHashTable *gPlayers;
 
-static BOOL IsTikTok(void) { return [[[NSBundle mainBundle] bundleIdentifier] isEqualToString:@"com.zhiliaoapp.musically"]; }
+static BOOL IsTikTok(void) {
+    return [[[NSBundle mainBundle] bundleIdentifier] isEqualToString:@"com.zhiliaoapp.musically"];
+}
 
 static UIWindow *TopWindow(void) {
     if (@available(iOS 13.0, *)) {
@@ -39,6 +41,7 @@ void TikTokPlusSetMuted(BOOL muted) {
 
 @interface TTKPlusAudioTarget : NSObject
 @end
+
 @implementation TTKPlusAudioTarget
 - (void)tapMute:(id)sender {
     TikTokPlusSetMuted(!gTikTokMuted);
@@ -78,9 +81,12 @@ void TikTokPlusInstallMuteButton(void) {
 
 %hook AVPlayer
 - (void)play {
-    if (IsTikTok() && gTikTokMuted) {
-        self.muted = YES;
-        self.volume = 0.0;
+    if (IsTikTok()) {
+        [gPlayers addObject:self];
+        if (gTikTokMuted) {
+            self.muted = YES;
+            self.volume = 0.0;
+        }
     }
     %orig;
     if (IsTikTok() && gTikTokMuted) {
@@ -88,11 +94,15 @@ void TikTokPlusInstallMuteButton(void) {
         self.volume = 0.0;
     }
 }
+
 - (void)setMuted:(BOOL)muted {
+    if (IsTikTok()) [gPlayers addObject:self];
     if (IsTikTok() && gTikTokMuted) muted = YES;
     %orig;
 }
+
 - (void)setVolume:(float)volume {
+    if (IsTikTok()) [gPlayers addObject:self];
     if (IsTikTok() && gTikTokMuted) volume = 0.0;
     %orig;
 }
