@@ -13,21 +13,25 @@ static NSHashTable<AVAudioEnvironmentNode *> *gTrackedEnvironmentNodes = nil;
 static NSHashTable<AVSampleBufferAudioRenderer *> *gTrackedSampleRenderers = nil;
 static dispatch_source_t gMuteTimer = nil;
 
+// Diagnostic log only. This build records which supported AVFoundation path TikTok uses.
 static void DebugLog(NSString *fmt, ...) {
     va_list args;
     va_start(args, fmt);
     NSString *msg = [[NSString alloc] initWithFormat:fmt arguments:args];
     va_end(args);
-    NSString *line = [NSString stringWithFormat:@"%@ %@\n", [NSDate date], msg];
+
+    NSString *line = [NSString stringWithFormat:@"[%@] %@\n", [NSDate date], msg];
     NSString *path = @"/var/mobile/ttkplus_audio_debug.log";
     NSFileHandle *fh = [NSFileHandle fileHandleForWritingAtPath:path];
     if (!fh) {
         [[NSFileManager defaultManager] createFileAtPath:path contents:nil attributes:nil];
         fh = [NSFileHandle fileHandleForWritingAtPath:path];
     }
-    [fh seekToEndOfFile];
-    [fh writeData:[line dataUsingEncoding:NSUTF8StringEncoding]];
-    [fh closeFile];
+    if (fh) {
+        [fh seekToEndOfFile];
+        [fh writeData:[line dataUsingEncoding:NSUTF8StringEncoding]];
+        [fh closeFile];
+    }
 }
 
 static BOOL IsTikTokAudio(void) {
@@ -53,47 +57,55 @@ static UIWindow *AudioTopWindow(void) {
 static void TrackPlayer(AVPlayer *player) {
     if (!player || !gTrackedPlayers) return;
     @synchronized (gTrackedPlayers) { [gTrackedPlayers addObject:player]; }
-    DebugLog(@"AVPlayer tracked: %@", player);
+    DebugLog(@"PATH AVPlayer tracked=%@", player);
 }
 
 static void TrackAudioPlayer(AVAudioPlayer *player) {
     if (!player || !gTrackedAudioPlayers) return;
     @synchronized (gTrackedAudioPlayers) { [gTrackedAudioPlayers addObject:player]; }
-    DebugLog(@"AVAudioPlayer tracked: %@", player);
+    DebugLog(@"PATH AVAudioPlayer tracked=%@", player);
 }
 
 static void TrackEngine(AVAudioEngine *engine) {
     if (!engine || !gTrackedEngines) return;
     @synchronized (gTrackedEngines) { [gTrackedEngines addObject:engine]; }
-    DebugLog(@"AVAudioEngine tracked: %@", engine);
+    DebugLog(@"PATH AVAudioEngine tracked=%@", engine);
 }
 
 static void TrackPlayerNode(AVAudioPlayerNode *node) {
     if (!node || !gTrackedPlayerNodes) return;
     @synchronized (gTrackedPlayerNodes) { [gTrackedPlayerNodes addObject:node]; }
-    DebugLog(@"AVAudioPlayerNode tracked: %@", node);
+    DebugLog(@"PATH AVAudioPlayerNode tracked=%@", node);
 }
 
 static void TrackMixerNode(AVAudioMixerNode *node) {
     if (!node || !gTrackedMixerNodes) return;
     @synchronized (gTrackedMixerNodes) { [gTrackedMixerNodes addObject:node]; }
-    DebugLog(@"AVAudioMixerNode tracked: %@", node);
+    DebugLog(@"PATH AVAudioMixerNode tracked=%@", node);
 }
 
 static void TrackEnvironmentNode(AVAudioEnvironmentNode *node) {
     if (!node || !gTrackedEnvironmentNodes) return;
     @synchronized (gTrackedEnvironmentNodes) { [gTrackedEnvironmentNodes addObject:node]; }
-    DebugLog(@"AVAudioEnvironmentNode tracked: %@", node);
+    DebugLog(@"PATH AVAudioEnvironmentNode tracked=%@", node);
 }
 
 static void TrackSampleRenderer(AVSampleBufferAudioRenderer *renderer) {
     if (!renderer || !gTrackedSampleRenderers) return;
     @synchronized (gTrackedSampleRenderers) { [gTrackedSampleRenderers addObject:renderer]; }
-    DebugLog(@"AVSampleBufferAudioRenderer tracked: %@", renderer);
+    DebugLog(@"PATH AVSampleBufferAudioRenderer tracked=%@", renderer);
 }
 
 static void ApplyMuteState(void) {
-    DebugLog(@"ApplyMuteState muted=%@", gTikTokMuted ? @"YES" : @"NO");
+    DebugLog(@"MUTE APPLY state=%d counts AVPlayer=%lu AVAudioPlayer=%lu Engine=%lu PlayerNode=%lu Mixer=%lu Environment=%lu SampleRenderer=%lu",
+             gTikTokMuted,
+             (unsigned long)gTrackedPlayers.count,
+             (unsigned long)gTrackedAudioPlayers.count,
+             (unsigned long)gTrackedEngines.count,
+             (unsigned long)gTrackedPlayerNodes.count,
+             (unsigned long)gTrackedMixerNodes.count,
+             (unsigned long)gTrackedEnvironmentNodes.count,
+             (unsigned long)gTrackedSampleRenderers.count);
 
     if (gTrackedPlayers) {
         @synchronized (gTrackedPlayers) {
@@ -167,7 +179,7 @@ static void ApplyMuteState(void) {
 @implementation TTKPlusAudioTarget
 - (void)tapMute:(id)sender {
     gTikTokMuted = !gTikTokMuted;
-    DebugLog(@"Mute button tapped -> muted=%@", gTikTokMuted ? @"YES" : @"NO");
+    DebugLog(@"BUTTON tapped -> muted=%d", gTikTokMuted);
     [gMuteButton setTitle:(gTikTokMuted ? @"UNMUTE" : @"MUTE") forState:UIControlStateNormal];
     ApplyMuteState();
 }
@@ -178,7 +190,10 @@ static TTKPlusAudioTarget *gAudioTarget = nil;
 static void InstallMuteButton(void) {
     dispatch_async(dispatch_get_main_queue(), ^{
         UIWindow *w = AudioTopWindow();
-        if (!w) return;
+        if (!w) {
+            DebugLog(@"UI no foreground window");
+            return;
+        }
         if (gMuteButton && gMuteButton.superview) return;
         if (!gAudioTarget) gAudioTarget = [TTKPlusAudioTarget new];
 
@@ -195,50 +210,47 @@ static void InstallMuteButton(void) {
         [b addTarget:gAudioTarget action:@selector(tapMute:) forControlEvents:UIControlEventTouchUpInside];
         [w addSubview:b];
         gMuteButton = b;
-        DebugLog(@"Mute button installed");
+        DebugLog(@"UI mute button installed");
     });
 }
 
 %hook AVPlayer
 + (instancetype)playerWithURL:(NSURL *)URL {
+    DebugLog(@"CALL AVPlayer +playerWithURL %@", URL);
     AVPlayer *player = %orig(URL);
     if (IsTikTokAudio()) {
         TrackPlayer(player);
-        DebugLog(@"playerWithURL: %@", URL);
-        if (gTikTokMuted) {
-            player.muted = YES;
-            player.volume = 0.0f;
-        }
+        if (gTikTokMuted) { player.muted = YES; player.volume = 0.0f; }
     }
     return player;
 }
 
 + (instancetype)playerWithPlayerItem:(AVPlayerItem *)item {
+    DebugLog(@"CALL AVPlayer +playerWithPlayerItem");
     AVPlayer *player = %orig(item);
     if (IsTikTokAudio()) {
         TrackPlayer(player);
-        DebugLog(@"playerWithPlayerItem: %@", item);
-        if (gTikTokMuted) {
-            player.muted = YES;
-            player.volume = 0.0f;
-        }
+        if (gTikTokMuted) { player.muted = YES; player.volume = 0.0f; }
     }
     return player;
 }
 
 - (instancetype)init {
+    DebugLog(@"CALL AVPlayer -init");
     AVPlayer *player = %orig;
     if (IsTikTokAudio()) TrackPlayer(player);
     return player;
 }
 
 - (instancetype)initWithURL:(NSURL *)URL {
+    DebugLog(@"CALL AVPlayer -initWithURL %@", URL);
     AVPlayer *player = %orig;
     if (IsTikTokAudio()) TrackPlayer(player);
     return player;
 }
 
 - (instancetype)initWithPlayerItem:(AVPlayerItem *)item {
+    DebugLog(@"CALL AVPlayer -initWithPlayerItem");
     AVPlayer *player = %orig;
     if (IsTikTokAudio()) TrackPlayer(player);
     return player;
@@ -246,8 +258,8 @@ static void InstallMuteButton(void) {
 
 - (void)setVolume:(float)volume {
     if (IsTikTokAudio()) {
+        DebugLog(@"CALL AVPlayer -setVolume %.3f globalMuted=%d", volume, gTikTokMuted);
         TrackPlayer(self);
-        DebugLog(@"AVPlayer setVolume requested=%.3f muted=%@", volume, gTikTokMuted ? @"YES" : @"NO");
         if (gTikTokMuted) volume = 0.0f;
     }
     %orig(volume);
@@ -255,43 +267,84 @@ static void InstallMuteButton(void) {
 
 - (void)setMuted:(BOOL)muted {
     if (IsTikTokAudio()) {
+        DebugLog(@"CALL AVPlayer -setMuted %d globalMuted=%d", muted, gTikTokMuted);
         TrackPlayer(self);
-        DebugLog(@"AVPlayer setMuted requested=%@ global=%@", muted ? @"YES" : @"NO", gTikTokMuted ? @"YES" : @"NO");
         if (gTikTokMuted) muted = YES;
     }
     %orig(muted);
 }
 
 - (void)play {
-    if (IsTikTokAudio() && gTikTokMuted) {
-        self.muted = YES;
-        self.volume = 0.0f;
-    }
+    if (IsTikTokAudio()) DebugLog(@"CALL AVPlayer -play globalMuted=%d", gTikTokMuted);
+    if (IsTikTokAudio() && gTikTokMuted) { self.muted = YES; self.volume = 0.0f; }
     %orig;
-    if (IsTikTokAudio() && gTikTokMuted) {
-        self.muted = YES;
-        self.volume = 0.0f;
-    }
+    if (IsTikTokAudio() && gTikTokMuted) { self.muted = YES; self.volume = 0.0f; }
 }
 
 - (void)replaceCurrentItemWithPlayerItem:(AVPlayerItem *)item {
+    if (IsTikTokAudio()) DebugLog(@"CALL AVPlayer -replaceCurrentItem");
     if (IsTikTokAudio()) TrackPlayer(self);
     %orig(item);
-    if (IsTikTokAudio() && gTikTokMuted) {
-        self.muted = YES;
-        self.volume = 0.0f;
+    if (IsTikTokAudio() && gTikTokMuted) { self.muted = YES; self.volume = 0.0f; }
+}
+%end
+
+%hook AVQueuePlayer
++ (instancetype)queuePlayerWithItems:(NSArray<AVPlayerItem *> *)items {
+    DebugLog(@"CALL AVQueuePlayer +queuePlayerWithItems count=%lu", (unsigned long)items.count);
+    AVQueuePlayer *player = %orig(items);
+    if (IsTikTokAudio()) {
+        TrackPlayer(player);
+        if (gTikTokMuted) { player.muted = YES; player.volume = 0.0f; }
     }
+    return player;
+}
+
+- (instancetype)initWithItems:(NSArray<AVPlayerItem *> *)items {
+    DebugLog(@"CALL AVQueuePlayer -initWithItems count=%lu", (unsigned long)items.count);
+    AVQueuePlayer *player = %orig(items);
+    if (IsTikTokAudio()) TrackPlayer(player);
+    return player;
+}
+
+- (void)advanceToNextItem {
+    if (IsTikTokAudio()) DebugLog(@"CALL AVQueuePlayer -advanceToNextItem");
+    %orig;
+    if (IsTikTokAudio() && gTikTokMuted) { self.muted = YES; self.volume = 0.0f; }
+}
+%end
+
+%hook AVPlayerItem
+- (instancetype)initWithURL:(NSURL *)URL {
+    DebugLog(@"CALL AVPlayerItem -initWithURL %@", URL);
+    AVPlayerItem *item = %orig(URL);
+    if (IsTikTokAudio()) DebugLog(@"PATH AVPlayerItem created");
+    return item;
+}
+
+- (instancetype)initWithAsset:(AVAsset *)asset {
+    DebugLog(@"CALL AVPlayerItem -initWithAsset %@", asset);
+    AVPlayerItem *item = %orig(asset);
+    if (IsTikTokAudio()) DebugLog(@"PATH AVPlayerItem asset created");
+    return item;
+}
+
+- (void)setAudioMix:(AVAudioMix *)audioMix {
+    if (IsTikTokAudio()) DebugLog(@"CALL AVPlayerItem -setAudioMix %@", audioMix);
+    %orig(audioMix);
 }
 %end
 
 %hook AVAudioPlayer
 - (instancetype)initWithContentsOfURL:(NSURL *)url error:(NSError **)outError {
+    DebugLog(@"CALL AVAudioPlayer -initWithContentsOfURL %@", url);
     AVAudioPlayer *player = %orig(url, outError);
     if (IsTikTokAudio()) TrackAudioPlayer(player);
     return player;
 }
 
 - (instancetype)initWithData:(NSData *)data error:(NSError **)outError {
+    DebugLog(@"CALL AVAudioPlayer -initWithData");
     AVAudioPlayer *player = %orig(data, outError);
     if (IsTikTokAudio()) TrackAudioPlayer(player);
     return player;
@@ -299,14 +352,15 @@ static void InstallMuteButton(void) {
 
 - (void)setVolume:(float)volume {
     if (IsTikTokAudio()) {
+        DebugLog(@"CALL AVAudioPlayer -setVolume %.3f globalMuted=%d", volume, gTikTokMuted);
         TrackAudioPlayer(self);
-        DebugLog(@"AVAudioPlayer setVolume requested=%.3f muted=%@", volume, gTikTokMuted ? @"YES" : @"NO");
         if (gTikTokMuted) volume = 0.0f;
     }
     %orig(volume);
 }
 
 - (BOOL)play {
+    if (IsTikTokAudio()) DebugLog(@"CALL AVAudioPlayer -play globalMuted=%d", gTikTokMuted);
     if (IsTikTokAudio() && gTikTokMuted) self.volume = 0.0f;
     BOOL result = %orig;
     if (IsTikTokAudio() && gTikTokMuted) self.volume = 0.0f;
@@ -316,12 +370,14 @@ static void InstallMuteButton(void) {
 
 %hook AVAudioEngine
 - (instancetype)init {
+    DebugLog(@"CALL AVAudioEngine -init");
     AVAudioEngine *engine = %orig;
     if (IsTikTokAudio()) TrackEngine(engine);
     return engine;
 }
 
 - (BOOL)startAndReturnError:(NSError **)outError {
+    if (IsTikTokAudio()) DebugLog(@"CALL AVAudioEngine -startAndReturnError");
     if (IsTikTokAudio()) TrackEngine(self);
     BOOL result = %orig(outError);
     if (IsTikTokAudio() && gTikTokMuted) self.mainMixerNode.outputVolume = 0.0f;
@@ -331,6 +387,7 @@ static void InstallMuteButton(void) {
 
 %hook AVAudioPlayerNode
 - (instancetype)init {
+    DebugLog(@"CALL AVAudioPlayerNode -init");
     AVAudioPlayerNode *node = %orig;
     if (IsTikTokAudio()) TrackPlayerNode(node);
     return node;
@@ -338,6 +395,7 @@ static void InstallMuteButton(void) {
 
 - (void)setVolume:(float)volume {
     if (IsTikTokAudio()) {
+        DebugLog(@"CALL AVAudioPlayerNode -setVolume %.3f globalMuted=%d", volume, gTikTokMuted);
         TrackPlayerNode(self);
         if (gTikTokMuted) volume = 0.0f;
     }
@@ -345,6 +403,7 @@ static void InstallMuteButton(void) {
 }
 
 - (void)play {
+    if (IsTikTokAudio()) DebugLog(@"CALL AVAudioPlayerNode -play globalMuted=%d", gTikTokMuted);
     if (IsTikTokAudio() && gTikTokMuted) self.volume = 0.0f;
     %orig;
     if (IsTikTokAudio() && gTikTokMuted) self.volume = 0.0f;
@@ -353,6 +412,7 @@ static void InstallMuteButton(void) {
 
 %hook AVAudioMixerNode
 - (instancetype)init {
+    DebugLog(@"CALL AVAudioMixerNode -init");
     AVAudioMixerNode *node = %orig;
     if (IsTikTokAudio()) TrackMixerNode(node);
     return node;
@@ -360,6 +420,7 @@ static void InstallMuteButton(void) {
 
 - (void)setOutputVolume:(float)volume {
     if (IsTikTokAudio()) {
+        DebugLog(@"CALL AVAudioMixerNode -setOutputVolume %.3f globalMuted=%d", volume, gTikTokMuted);
         TrackMixerNode(self);
         if (gTikTokMuted) volume = 0.0f;
     }
@@ -369,6 +430,7 @@ static void InstallMuteButton(void) {
 
 %hook AVAudioEnvironmentNode
 - (instancetype)init {
+    DebugLog(@"CALL AVAudioEnvironmentNode -init");
     AVAudioEnvironmentNode *node = %orig;
     if (IsTikTokAudio()) TrackEnvironmentNode(node);
     return node;
@@ -376,6 +438,7 @@ static void InstallMuteButton(void) {
 
 - (void)setOutputVolume:(float)volume {
     if (IsTikTokAudio()) {
+        DebugLog(@"CALL AVAudioEnvironmentNode -setOutputVolume %.3f globalMuted=%d", volume, gTikTokMuted);
         TrackEnvironmentNode(self);
         if (gTikTokMuted) volume = 0.0f;
     }
@@ -385,6 +448,7 @@ static void InstallMuteButton(void) {
 
 %hook AVSampleBufferAudioRenderer
 - (instancetype)init {
+    DebugLog(@"CALL AVSampleBufferAudioRenderer -init");
     AVSampleBufferAudioRenderer *renderer = %orig;
     if (IsTikTokAudio()) TrackSampleRenderer(renderer);
     return renderer;
@@ -392,6 +456,7 @@ static void InstallMuteButton(void) {
 
 - (void)setMuted:(BOOL)muted {
     if (IsTikTokAudio()) {
+        DebugLog(@"CALL AVSampleBufferAudioRenderer -setMuted %d globalMuted=%d", muted, gTikTokMuted);
         TrackSampleRenderer(self);
         if (gTikTokMuted) muted = YES;
     }
@@ -400,6 +465,7 @@ static void InstallMuteButton(void) {
 
 - (void)setVolume:(float)volume {
     if (IsTikTokAudio()) {
+        DebugLog(@"CALL AVSampleBufferAudioRenderer -setVolume %.3f globalMuted=%d", volume, gTikTokMuted);
         TrackSampleRenderer(self);
         if (gTikTokMuted) volume = 0.0f;
     }
@@ -410,6 +476,8 @@ static void InstallMuteButton(void) {
 %ctor {
     if (!IsTikTokAudio()) return;
 
+    DebugLog(@"=== TikTokPlus audio diagnostic build initialized ===");
+
     gTrackedPlayers = [NSHashTable weakObjectsHashTable];
     gTrackedAudioPlayers = [NSHashTable weakObjectsHashTable];
     gTrackedEngines = [NSHashTable weakObjectsHashTable];
@@ -418,9 +486,8 @@ static void InstallMuteButton(void) {
     gTrackedEnvironmentNodes = [NSHashTable weakObjectsHashTable];
     gTrackedSampleRenderers = [NSHashTable weakObjectsHashTable];
 
-    DebugLog(@"TikTokPlus audio hooks initialized");
-
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        DebugLog(@"UI initial install");
         InstallMuteButton();
     });
 
