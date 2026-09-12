@@ -1,174 +1,125 @@
-#import <Foundation/Foundation.h>
-#import <objc/runtime.h>
-#import <objc/message.h>
+#import <UIKit/UIKit.h>
 #import <AVFoundation/AVFoundation.h>
+#import <objc/runtime.h>
 
-void TikTokPlusInstallMuteButton(void);
+static BOOL isGloballyMuted = YES;
 
-static BOOL gFeedMuted = YES;
-static NSMutableDictionary *gFeedOriginals;
+@interface TTKFeedMuteButtonTarget : NSObject
+@end
 
-static BOOL FeedIsTikTok(void){
-    NSString *b=NSBundle.mainBundle.bundleIdentifier.lowercaseString;
-    return [b containsString:@"musically"] || [b containsString:@"tiktok"];
+@implementation TTKFeedMuteButtonTarget
+- (void)toggleMuteState:(UIButton *)sender {
+    isGloballyMuted = !isGloballyMuted;
+    [sender setTitle:(isGloballyMuted ? @"🔇" : @"🔊") forState:UIControlStateNormal];
+    [[NSNotificationCenter defaultCenter] postNotificationName:@"TikTokPlusToggleMute"
+                                                        object:@(isGloballyMuted)];
 }
+@end
 
-static NSString *FeedKey(Class c, SEL s){
-    return [NSString stringWithFormat:@"%p:%@",c,NSStringFromSelector(s)];
-}
+static TTKFeedMuteButtonTarget *gMuteTarget;
 
-static IMP FeedOriginal(id self, SEL sel){
-    Class c=object_getClass(self);
-    while(c){
-        NSValue *v=gFeedOriginals[FeedKey(c,sel)];
-        if(v){ IMP p=NULL; [v getValue:&p]; return p; }
-        c=class_getSuperclass(c);
+static void TTKSetupMuteButton(UIView *view) {
+    if (!view || view.window == nil) return;
+
+    static NSInteger const kMuteButtonTag = 190612;
+    UIButton *button = (UIButton *)[view viewWithTag:kMuteButtonTag];
+    if (button && [button isKindOfClass:UIButton.class]) {
+        [view bringSubviewToFront:button];
+        return;
     }
-    return NULL;
+
+    if (!gMuteTarget) gMuteTarget = [TTKFeedMuteButtonTarget new];
+
+    UIButton *btn = [UIButton buttonWithType:UIButtonTypeCustom];
+    btn.tag = kMuteButtonTag;
+    btn.frame = CGRectMake(16.0, 60.0, 44.0, 44.0);
+    btn.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.6];
+    btn.layer.cornerRadius = 22.0;
+    btn.clipsToBounds = YES;
+    btn.layer.borderWidth = 1.0;
+    btn.layer.borderColor = UIColor.whiteColor.CGColor;
+    [btn setTitle:(isGloballyMuted ? @"🔇" : @"🔊") forState:UIControlStateNormal];
+    btn.titleLabel.font = [UIFont systemFontOfSize:20.0];
+    [btn addTarget:gMuteTarget action:@selector(toggleMuteState:) forControlEvents:UIControlEventTouchUpInside];
+    [view addSubview:btn];
+    [view bringSubviewToFront:btn];
 }
 
-static void FeedSetBool(id self, SEL sel, BOOL value){
-    if(gFeedMuted) value=YES;
-    IMP o=FeedOriginal(self,sel);
-    if(o)((void(*)(id,SEL,BOOL))o)(self,sel,value);
-}
+static BOOL TTKLooksLikeVideoContainer(UIView *view) {
+    if (!view || view.hidden || view.alpha <= 0.01 || view.window == nil) return NO;
 
-static void FeedSetVolume(id self, SEL sel, float value){
-    if(gFeedMuted) value=0.0f;
-    IMP o=FeedOriginal(self,sel);
-    if(o)((void(*)(id,SEL,float))o)(self,sel,value);
-}
+    NSString *name = NSStringFromClass(view.class).lowercaseString;
+    if ([name containsString:@"video"] ||
+        [name containsString:@"aweme"] ||
+        [name containsString:@"feed"] ||
+        [name containsString:@"player"]) return YES;
 
-static void FeedSetDouble(id self, SEL sel, double value){
-    if(gFeedMuted) value=0.0;
-    IMP o=FeedOriginal(self,sel);
-    if(o)((void(*)(id,SEL,double))o)(self,sel,value);
-}
-
-static void FeedMute(id self, SEL sel){
-    IMP o=FeedOriginal(self,sel);
-    if(o)((void(*)(id,SEL))o)(self,sel);
-    if(gFeedMuted){
-        if([self respondsToSelector:@selector(setMuted:)])
-            ((void(*)(id,SEL,BOOL))objc_msgSend)(self,@selector(setMuted:),YES);
-        if([self respondsToSelector:@selector(setVolume:)])
-            ((void(*)(id,SEL,float))objc_msgSend)(self,@selector(setVolume:),0.0f);
-    }
-}
-
-static void FeedPlay(id self, SEL sel){
-    IMP o=FeedOriginal(self,sel);
-    if(o)((void(*)(id,SEL))o)(self,sel);
-    if(gFeedMuted){
-        if([self respondsToSelector:@selector(setMuted:)])
-            ((void(*)(id,SEL,BOOL))objc_msgSend)(self,@selector(setMuted:),YES);
-        if([self respondsToSelector:@selector(setVolume:)])
-            ((void(*)(id,SEL,float))objc_msgSend)(self,@selector(setVolume:),0.0f);
-        if([self respondsToSelector:@selector(setAudioPlayVolume:)])
-            ((void(*)(id,SEL,float))objc_msgSend)(self,@selector(setAudioPlayVolume:),0.0f);
-        if([self respondsToSelector:@selector(setOriginalSoundVolume:)])
-            ((void(*)(id,SEL,float))objc_msgSend)(self,@selector(setOriginalSoundVolume:),0.0f);
-        if([self respondsToSelector:@selector(setVoiceoverVolume:)])
-            ((void(*)(id,SEL,float))objc_msgSend)(self,@selector(setVoiceoverVolume:),0.0f);
-    }
-}
-
-static void FeedCapture(id self, SEL sel, id value){
-    IMP o=FeedOriginal(self,sel);
-    if(o)((void(*)(id,SEL,id))o)(self,sel,value);
-    if(gFeedMuted && value && value!=self){
-        if([value respondsToSelector:@selector(setMuted:)])
-            ((void(*)(id,SEL,BOOL))objc_msgSend)(value,@selector(setMuted:),YES);
-        if([value respondsToSelector:@selector(setVolume:)])
-            ((void(*)(id,SEL,float))objc_msgSend)(value,@selector(setVolume:),0.0f);
-    }
-}
-
-/* Dedicated hooks requested for TikTok's feed/audio/model path. */
-static void FeedControllerSetVolume(id self, SEL sel, float volume){
-    IMP o=FeedOriginal(self,sel);
-    if(o)((void(*)(id,SEL,float))o)(self,sel,0.0f);
-}
-
-static void FeedMusicSetVolume(id self, SEL sel, float volume){
-    IMP o=FeedOriginal(self,sel);
-    if(o)((void(*)(id,SEL,float))o)(self,sel,0.0f);
-}
-
-static BOOL FeedMusicIsPlaying(id self, SEL sel){
     return NO;
 }
 
-static BOOL FeedModelIsMuted(id self, SEL sel){
-    return YES;
-}
+static void TTKInstallButtonOnViewTree(UIView *root) {
+    if (!root) return;
 
-static void FeedInstall(Class cls, SEL sel, IMP replacement){
-    if(!cls||!replacement)return;
-    Method m=class_getInstanceMethod(cls,sel);
-    if(!m)return;
-    NSString *k=FeedKey(cls,sel);
-    if(gFeedOriginals[k])return;
-    IMP original=method_getImplementation(m);
-    gFeedOriginals[k]=[NSValue valueWithBytes:&original objCType:@encode(IMP)];
-    method_setImplementation(m,replacement);
-}
-
-static void FeedInstallClass(Class cls){
-    if(!cls)return;
-    FeedInstall(cls,@selector(play),(IMP)FeedPlay);
-    FeedInstall(cls,@selector(mute),(IMP)FeedMute);
-    for(NSString *n in @[@"setMuted:",@"setMute:",@"setIsMuted:",@"setAudioMuted:"])
-        FeedInstall(cls,NSSelectorFromString(n),(IMP)FeedSetBool);
-
-    for(NSString *n in @[
-        @"setVolume:",@"setAudioVolume:",@"setPlayerVolume:",@"setOutputVolume:",
-        @"setAudioPlayVolume:",@"setOriginalSoundVolume:",@"setVoiceoverVolume:",
-        @"setMusicVolume:",@"setBGMVolume:",@"setBgMusicVolume:"]){
-        SEL s=NSSelectorFromString(n);
-        Method m=class_getInstanceMethod(cls,s);
-        if(!m)continue;
-        const char *t=method_getTypeEncoding(m);
-        FeedInstall(cls,s,(t&&strchr(t,'d'))?(IMP)FeedSetDouble:(IMP)FeedSetVolume);
+    if (TTKLooksLikeVideoContainer(root)) {
+        TTKSetupMuteButton(root);
+        return;
     }
 
-    for(NSString *n in @[@"setPlayer:",@"setCurrentPlayer:",@"setAVPlayer:",@"setAvPlayer:",@"setVideoPlayer:",@"setAudioPlayer:"])
-        FeedInstall(cls,NSSelectorFromString(n),(IMP)FeedCapture);
+    for (UIView *subview in root.subviews) {
+        TTKInstallButtonOnViewTree(subview);
+    }
 }
 
-%ctor{
-    if(!FeedIsTikTok())return;
-    gFeedOriginals=[NSMutableDictionary dictionary];
-    dispatch_async(dispatch_get_main_queue(),^{
-        [[NSNotificationCenter defaultCenter]addObserverForName:@"TikTokPlusMuteChanged" object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n){
-            gFeedMuted=[n.userInfo[@"muted"] boolValue];
-        }];
+%hook UIView
+- (void)didMoveToWindow {
+    %orig;
+    if (self.window && TTKLooksLikeVideoContainer(self)) {
+        TTKSetupMuteButton(self);
+    }
+}
+
+- (void)layoutSubviews {
+    %orig;
+    if (self.window && TTKLooksLikeVideoContainer(self)) {
+        UIButton *button = (UIButton *)[self viewWithTag:190612];
+        if (button) {
+            button.frame = CGRectMake(16.0, 60.0, 44.0, 44.0);
+            [self bringSubviewToFront:button];
+        }
+    }
+}
+%end
+
+%hook UICollectionViewCell
+- (void)didMoveToWindow {
+    %orig;
+    if (self.window) TTKSetupMuteButton(self);
+}
+
+- (void)layoutSubviews {
+    %orig;
+    if (self.window) {
+        TTKSetupMuteButton(self);
+        UIButton *button = (UIButton *)[self viewWithTag:190612];
+        if (button) {
+            button.frame = CGRectMake(16.0, 60.0, 44.0, 44.0);
+            [self bringSubviewToFront:button];
+        }
+    }
+}
+%end
+
+// Fallback player volume enforcement.
+%hook IESVideoPlayer
+- (void)setVolume:(float)volume {
+    %orig(isGloballyMuted ? 0.0f : volume);
+}
+%end
+
+%ctor {
+    if (!NSBundle.mainBundle.bundleIdentifier.lowercaseString.length) return;
+
+    dispatch_async(dispatch_get_main_queue(), ^{
+        TTKInstallButtonOnViewTree(UIApplication.sharedApplication.keyWindow);
     });
-
-    dispatch_source_t timer=dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER,0,0,dispatch_get_main_queue());
-    dispatch_source_set_timer(timer,dispatch_time(DISPATCH_TIME_NOW,NSEC_PER_SEC),NSEC_PER_SEC,100*NSEC_PER_MSEC);
-    dispatch_source_set_event_handler(timer,^{
-        if(!FeedIsTikTok())return;
-
-        /* Existing player/controller paths. */
-        FeedInstallClass(NSClassFromString(@"AWEAVPlayerWrapper"));
-        FeedInstallClass(NSClassFromString(@"AWEAwemeDisplayPlayerController"));
-        FeedInstallClass(NSClassFromString(@"AWEAwemePlayMediaPlayerControllerLegacy"));
-        FeedInstallClass(NSClassFromString(@"AWEPlayVideoPlayerController"));
-        FeedInstallClass(NSClassFromString(@"AWEFeedCellViewController"));
-
-        /* Explicit feed/audio/model hooks requested for this build. */
-        Class feedController=NSClassFromString(@"AWEFeedTableViewController");
-        FeedInstall(feedController,@selector(setVolume:),(IMP)FeedControllerSetVolume);
-
-        Class musicPlayer=NSClassFromString(@"AWEMusicPlayer");
-        FeedInstall(musicPlayer,@selector(setVolume:),(IMP)FeedMusicSetVolume);
-        FeedInstall(musicPlayer,@selector(isPlaying),(IMP)FeedMusicIsPlaying);
-
-        Class awemeModel=NSClassFromString(@"AWEAwemeModel");
-        FeedInstall(awemeModel,@selector(isMuted),(IMP)FeedModelIsMuted);
-
-        TikTokPlusInstallMuteButton();
-    });
-    dispatch_resume(timer);
 }
