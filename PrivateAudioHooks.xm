@@ -35,29 +35,14 @@ static void PTRestoreObject(id o){
     if([o respondsToSelector:@selector(setMuted:)])((void(*)(id,SEL,BOOL))objc_msgSend)(o,@selector(setMuted:),NO);
     if([o respondsToSelector:@selector(setAudioMuted:)])((void(*)(id,SEL,BOOL))objc_msgSend)(o,@selector(setAudioMuted:),NO);
     if([o respondsToSelector:@selector(setEnableSoundOutput:)])((void(*)(id,SEL,BOOL))objc_msgSend)(o,@selector(setEnableSoundOutput:),YES);
-    if([o respondsToSelector:@selector(setVolume:)]&&[o respondsToSelector:@selector(volume)]){@try{float v=((float(*)(id,SEL))objc_msgSend)(o,@selector(volume));if(v<=.001f)((void(*)(id,SEL,float))objc_msgSend)(o,@selector(setVolume:),1.0f);}@catch(__unused NSException*e){}}
-    if([o respondsToSelector:@selector(setAudioVolume:)]&&[o respondsToSelector:@selector(audioVolume)]){@try{float v=((float(*)(id,SEL))objc_msgSend)(o,@selector(audioVolume));if(v<=.001f)((void(*)(id,SEL,float))objc_msgSend)(o,@selector(setAudioVolume:),1.0f);}@catch(__unused NSException*e){}}
-    if([o respondsToSelector:@selector(setPlayerVolume:)]&&[o respondsToSelector:@selector(playerVolume)]){@try{float v=((float(*)(id,SEL))objc_msgSend)(o,@selector(playerVolume));if(v<=.001f)((void(*)(id,SEL,float))objc_msgSend)(o,@selector(setPlayerVolume:),1.0f);}@catch(__unused NSException*e){}}
-    if([o respondsToSelector:@selector(setOutputVolume:)]&&[o respondsToSelector:@selector(outputVolume)]){@try{float v=((float(*)(id,SEL))objc_msgSend)(o,@selector(outputVolume));if(v<=.001f)((void(*)(id,SEL,float))objc_msgSend)(o,@selector(setOutputVolume:),1.0f);}@catch(__unused NSException*e){}}
 }
 
-static void PTProbeNode(id node){
-    if(!node)return;
-    if(gPrivateTikTokMuted)PTForceObject(node);else PTRestoreObject(node);
-}
+static void PTProbeNode(id node){if(!node)return;if(gPrivateTikTokMuted)PTForceObject(node);else PTRestoreObject(node);}
 
-static void PTProbeCore(id core){
-    if(!core)return;
-    PTProbeNode(core);
-    for(NSString*n in @[@"playerNode",@"mixerNode",@"silentNode",@"mainMixerNode"]){SEL s=NSSelectorFromString(n);if([core respondsToSelector:s]){@try{id node=((id(*)(id,SEL))objc_msgSend)(core,s);PTProbeNode(node);}@catch(__unused NSException*e){}}}
-}
-
-/* Walk the small object graph exposed by TikTok's feed-player wrappers. */
 static void PTProbePlayer(id player){
     if(!player)return;
     PTProbeNode(player);
     for(NSString*n in @[@"player",@"currentPlayer",@"audioPlayer",@"avPlayer",@"videoPlayer",@"playerNode",@"mixerNode",@"silentNode",@"audioEngine",@"audioMixerNode",@"mainMixerNode",@"audioRenderer",@"audioOutput",@"soundPlayer",@"soundEngine",@"core",@"audioCore",@"playerCore",@"audioPlayerCore"]){SEL s=NSSelectorFromString(n);if(![player respondsToSelector:s])continue;@try{id child=((id(*)(id,SEL))objc_msgSend)(player,s);if(child&&child!=player)PTProbeNode(child);}@catch(__unused NSException*e){}}
-    for(NSString*n in @[@"player",@"currentPlayer",@"avPlayer",@"audioPlayer"]){SEL s=NSSelectorFromString(n);if(![player respondsToSelector:s])continue;@try{id child=((id(*)(id,SEL))objc_msgSend)(player,s);if(child&&child!=player)PTProbePlayer(child);}@catch(__unused NSException*e){}}
 }
 
 static void PTInstall(Class cls,SEL sel,IMP replacement){
@@ -79,7 +64,7 @@ static void PTPlayerLoop(id self,SEL sel,id player){
     gCurrentPlayerController=self;gCurrentPlayer=player;
     IMP o=PTOriginalForSelf(self,sel);if(o)((void(*)(id,SEL,id))o)(self,sel,player);
     TikTokPlusInstallMuteButton();PTProbePlayer(player);
-    if(gPrivateTikTokMuted){PTForceObject(self);PTApplyCurrent();}else PTRestoreObject(self);
+    if(gPrivateTikTokMuted){PTForceObject(self);PTApplyCurrent();}else PTRestoreObject(player);
 }
 static void PTFeedDisplay(id self,SEL sel,NSInteger reason){
     gCurrentFeedCell=self;
@@ -135,8 +120,6 @@ static void PTApplyCurrent(void){
     PTForceObject(gCurrentPlayer);PTForceObject(gCurrentPlayerController);PTForceObject(gCurrentFeedCell);PTProbePlayer(gCurrentPlayer);
     if([gCurrentPlayerController respondsToSelector:@selector(player)]){@try{PTProbePlayer(((id(*)(id,SEL))objc_msgSend)(gCurrentPlayerController,@selector(player)));}@catch(__unused NSException*e){}}
     if([gCurrentPlayerController respondsToSelector:@selector(currentPlayer)]){@try{PTProbePlayer(((id(*)(id,SEL))objc_msgSend)(gCurrentPlayerController,@selector(currentPlayer)));}@catch(__unused NSException*e){}}
-    if([gCurrentPlayer respondsToSelector:@selector(player)]){@try{PTProbePlayer(((id(*)(id,SEL))objc_msgSend)(gCurrentPlayer,@selector(player)));}@catch(__unused NSException*e){}}
-    if([gCurrentPlayer respondsToSelector:@selector(avPlayer)]){@try{PTProbePlayer(((id(*)(id,SEL))objc_msgSend)(gCurrentPlayer,@selector(avPlayer)));}@catch(__unused NSException*e){}}
 }
 static void PTRestoreCurrent(void){
     if(gPrivateTikTokMuted)return;
