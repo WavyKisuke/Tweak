@@ -194,6 +194,46 @@ static void InstallPrivateHooks(void){
             }
             return e;
         }));
+
+        // Hook-the-world: iterate every loaded ObjC class and hook the
+        // audio setters on any non-Apple class that implements them. This is
+        // the last-resort net for private TikTok audio classes I couldn't
+        // enumerate blindly. Apple framework classes are skipped by the
+        // prefix list — we don't want to corrupt system audio or break
+        // unrelated frameworks.
+        NSArray *skipPrefixes=@[@"NS", @"UI", @"CA", @"CG", @"CF", @"MTL",
+                                @"_", @"WK", @"AV", @"AB", @"CN", @"PH",
+                                @"SK", @"CL", @"MK", @"HM", @"IN", @"RP",
+                                @"PDF", @"VN", @"ML", @"SF", @"XC", @"BS",
+                                @"SL", @"RBS", @"LA", @"OS", @"BK",
+                                @"Core", @"libsystem", @"libobjc", @"com.apple"];
+        NSArray *targets=@[@"setVolume:", @"setMuted:", @"setOutputVolume:",
+                           @"setAudioVolume:", @"setAudioMuted:",
+                           @"setPlayerVolume:", @"setEnableSoundOutput:"];
+        unsigned int nClasses=0;
+        Class *classes=objc_copyClassList(&nClasses);
+        for(unsigned int i=0;i<nClasses;i++){
+            Class cls=classes[i];
+            if(!cls)continue;
+            NSString *name=NSStringFromClass(cls);
+            BOOL skip=NO;
+            for(NSString *p in skipPrefixes){
+                if([name hasPrefix:p]){skip=YES;break;}
+            }
+            if(skip)continue;
+            for(NSString *selName in targets){
+                SEL sel=NSSelectorFromString(selName);
+                if(!class_respondsToSelector(cls,sel))continue;
+                // Determine float vs double from type encoding.
+                Method mth=class_getInstanceMethod(cls,sel);
+                if(!mth)continue;
+                const char *t=method_getTypeEncoding(mth);
+                BOOL isDouble=(t&&strchr(t,'d'));
+                IMP repl=isDouble?(IMP)PTSetDouble:(IMP)PTSetFloat;
+                PTInstall(cls,sel,repl);
+            }
+        }
+        free(classes);
     });
 }
 
