@@ -4,7 +4,6 @@
 
 static BOOL gTikTokMuted=YES;
 static UIButton *gMuteButton;
-static UIWindow *gMuteWindow;
 static id gAudioTarget;
 static NSHashTable *gPlayers;
 static NSHashTable *gAudioObjects;
@@ -26,17 +25,14 @@ static IMP AVOriginal(id self,SEL sel){
     return NULL;
 }
 
-/* Keep TikTok's audio session mixable so background audio is not interrupted. */
+/* Do not let TikTok take exclusive control of the system audio session. */
 static void EnsureBackgroundMusicMixing(void){
     if(!IsTikTok()) return;
     AVAudioSession *s=AVAudioSession.sharedInstance;
-    AVAudioSessionCategoryOptions o=s.categoryOptions;
-    NSString *c=s.category;
-    if(!c.length) return;
-    AVAudioSessionCategoryOptions desired=o|AVAudioSessionCategoryOptionMixWithOthers;
-    if((o&AVAudioSessionCategoryOptionMixWithOthers)==0){
-        [s setCategory:c mode:s.mode options:desired error:nil];
-    }
+    NSString *category=s.category;
+    if(!category.length) category=AVAudioSessionCategoryPlayback;
+    AVAudioSessionCategoryOptions options=s.categoryOptions|AVAudioSessionCategoryOptionMixWithOthers;
+    [s setCategory:category mode:s.mode options:options error:nil];
 }
 
 static void ForceMuteObject(id o){
@@ -76,58 +72,74 @@ void TikTokPlusSetMuted(BOOL muted){
 -(void)tapMute:(id)sender{ TikTokPlusSetMuted(!gTikTokMuted); }
 @end
 
-@interface TTKMuteWindow:UIWindow @end
-@implementation TTKMuteWindow
-- (UIView *)hitTest:(CGPoint)p withEvent:(UIEvent *)e{
-    UIView *hit=[super hitTest:p withEvent:e];
-    if(hit==self || hit==self.rootViewController.view) return nil;
-    return hit;
-}
-@end
-
+/* Pick the actual foreground TikTok window/scene. */
 static UIWindow *TTKFindHostWindow(void){
-    for(UIWindow *w in UIApplication.sharedApplication.windows){
+    UIApplication *app=UIApplication.sharedApplication;
+    UIWindow *key=nil;
+    for(UIWindow *w in app.windows){
         if(w.hidden || w.alpha<=0.01 || w.windowLevel!=UIWindowLevelNormal) continue;
-        if(w.rootViewController && w!=gMuteWindow) return w;
+        if(!w.rootViewController) continue;
+        if(w.isKeyWindow) key=w;
+    }
+    if(key) return key;
+
+    if(@available(iOS 13.0,*)){
+        for(UIScene *scene in app.connectedScenes){
+            if(scene.activationState!=UISceneActivationStateForegroundActive) continue;
+            if(![scene isKindOfClass:UIWindowScene.class]) continue;
+            for(UIWindow *w in ((UIWindowScene *)scene).windows){
+                if(w.hidden || w.alpha<=0.01 || w.windowLevel!=UIWindowLevelNormal) continue;
+                if(w.rootViewController) return w;
+            }
+        }
+    }
+
+    for(UIWindow *w in app.windows){
+        if(!w.hidden && w.alpha>0.01 && w.windowLevel==UIWindowLevelNormal && w.rootViewController) return w;
     }
     return nil;
 }
 
+/*
+ * Put the control directly on TikTok's real UIWindow rather than creating a
+ * second UIWindow. A second window can sit behind TikTok's scene on newer iOS
+ * versions; attaching to the foreground window is considerably more reliable.
+ */
 static void InstallMuteButton(void){
     dispatch_async(dispatch_get_main_queue(),^{
         if(!IsTikTok()) return;
         UIWindow *host=TTKFindHostWindow();
         if(!host) return;
         if(!gAudioTarget) gAudioTarget=[TTKPlusAudioTarget new];
-        if(!gMuteWindow){
-            TTKMuteWindow *w=[[TTKMuteWindow alloc]initWithFrame:UIScreen.mainScreen.bounds];
-            w.backgroundColor=UIColor.clearColor;
-            w.windowLevel=UIWindowLevelNormal+1.0;
-            w.rootViewController=[UIViewController new];
-            w.rootViewController.view.backgroundColor=UIColor.clearColor;
-            w.userInteractionEnabled=YES;
-            gMuteWindow=w;
-        }
-        gMuteWindow.frame=host.bounds;
-        gMuteWindow.hidden=NO;
-        gMuteWindow.rootViewController.view.frame=gMuteWindow.bounds;
-        if(!gMuteButton){
-            UIButton *b=[UIButton buttonWithType:UIButtonTypeSystem];
+
+        UIButton *b=gMuteButton;
+        if(!b || b.superview!=host){
+            if(b) [b removeFromSuperview];
+            b=[UIButton buttonWithType:UIButtonTypeSystem];
             b.tag=190611;
-            b.backgroundColor=[[UIColor blackColor]colorWithAlphaComponent:.82];
-            b.layer.cornerRadius=10.0;
+            b.backgroundColor=[[UIColor blackColor]colorWithAlphaComponent:.86];
+            b.layer.cornerRadius=12.0;
+            b.layer.borderWidth=1.0;
+            b.layer.borderColor=UIColor.whiteColor.CGColor;
             b.layer.masksToBounds=YES;
-            [b setTitle:@"MUTE" forState:UIControlStateNormal];
             [b setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
-            b.titleLabel.font=[UIFont boldSystemFontOfSize:14];
+            [b setTitle:gTikTokMuted?@"🔇  UNMUTE":@"🔊  MUTE" forState:UIControlStateNormal];
+            b.titleLabel.font=[UIFont boldSystemFontOfSize:13.0];
+            b.accessibilityLabel=@"TikTok audio mute";
+            b.accessibilityHint=@"Double tap to toggle TikTok audio";
             [b addTarget:gAudioTarget action:@selector(tapMute:) forControlEvents:UIControlEventTouchUpInside];
             gMuteButton=b;
-            [gMuteWindow.rootViewController.view addSubview:b];
+            [host addSubview:b];
         }
-        CGFloat top=MAX(host.safeAreaInsets.top+8.0,44.0);
-        gMuteButton.frame=CGRectMake(MAX(8.0,host.bounds.size.width-110.0),top,96.0,42.0);
-        gMuteButton.hidden=NO;
-        [gMuteButton setTitle:gTikTokMuted?@"UNMUTE":@"MUTE" forState:UIControlStateNormal];
+
+        CGFloat top=MAX(host.safeAreaInsets.top+10.0,44.0);
+        CGFloat width=112.0;
+        CGFloat x=host.bounds.size.width-width-12.0;
+        b.frame=CGRectMake(MAX(8.0,x),top,width,44.0);
+        b.hidden=NO;
+        b.userInteractionEnabled=YES;
+        [b setTitle:gTikTokMuted?@"🔇  UNMUTE":@"🔊  MUTE" forState:UIControlStateNormal];
+        [host bringSubviewToFront:b];
     });
 }
 
@@ -147,7 +159,6 @@ static void SaveAndHook(Class c,SEL s,IMP r){
 static void TTKPlay(id self,SEL sel){
     [gPlayers addObject:self];
     [gAudioObjects addObject:self];
-    if(gTikTokMuted) ForceMuteObject(self);
     IMP o=AVOriginal(self,sel);
     if(o)((void(*)(id,SEL))o)(self,sel);
     if(gTikTokMuted) ForceMuteObject(self);
@@ -172,16 +183,16 @@ static void TTKEngine(id self,SEL sel,NSError **e){
         [[self mainMixerNode]setOutputVolume:0.0f];
 }
 
-/* Keep the underlying system video player's own audio silent. */
+/* Suppress only the video's AVPlayerItem audio path. */
 static void TTKAVPlayerItemSetAudioMix(id self,SEL sel,AVAudioMix *mix){
     IMP o=AVOriginal(self,sel);
-    if(o)((void(*)(id,SEL,AVAudioMix *))o)(self,sel,nil);
+    if(o)((void(*)(id,SEL,AVAudioMix *))o)(self,sel,gTikTokMuted?nil:mix);
 }
 
 static NSArray *TTKAVPlayerItemTracks(id self,SEL sel){
     IMP o=AVOriginal(self,sel);
     NSArray *tracks=o?((NSArray *(*)(id,SEL))o)(self,sel):nil;
-    if(!tracks) return tracks;
+    if(!tracks || !gTikTokMuted) return tracks;
     for(AVPlayerItemTrack *track in tracks){
         if(track.assetTrack && [track.assetTrack.mediaType isEqualToString:AVMediaTypeAudio])
             track.enabled=NO;
@@ -228,7 +239,14 @@ static void InstallAVHooks(void){
     EnsureBackgroundMusicMixing();
     dispatch_async(dispatch_get_main_queue(),^{
         InstallMuteButton();
-        [[NSNotificationCenter defaultCenter]addObserverForName:UIApplicationDidBecomeActiveNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification*n){ InstallMuteButton(); }];
+        [[NSNotificationCenter defaultCenter]addObserverForName:UIApplicationDidBecomeActiveNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification*n){
+            InstallMuteButton();
+            EnsureBackgroundMusicMixing();
+            ApplyMuteState();
+        }];
+        [[NSNotificationCenter defaultCenter]addObserverForName:@"TikTokPlusToggleMute" object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification*n){
+            TikTokPlusSetMuted([n.object boolValue]);
+        }];
     });
     dispatch_source_t t=dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER,0,0,dispatch_get_main_queue());
     dispatch_source_set_timer(t,dispatch_time(DISPATCH_TIME_NOW,NSEC_PER_SEC),NSEC_PER_SEC,100*NSEC_PER_MSEC);
