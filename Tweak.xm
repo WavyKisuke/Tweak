@@ -3,6 +3,8 @@
 #import <objc/runtime.h>
 #import <objc/message.h>
 
+extern void TikTokPlusInstallMuteButton(void);
+
 static UIButton *gSaveButton = nil;
 static NSURL *gCurrentVideoURL = nil;
 static BOOL gAdBlockEnabled = YES;
@@ -173,11 +175,15 @@ static void ScanForAds(UIView *root) {
 
 %ctor {
     if (!IsTikTok()) return;
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ InstallSaveButton(); });
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        InstallSaveButton();
+        TikTokPlusInstallMuteButton();
+    });
     dispatch_source_t timer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
-    dispatch_source_set_timer(timer, dispatch_time(DISPATCH_TIME_NOW, 3 * NSEC_PER_SEC), 3 * NSEC_PER_SEC, 500 * NSEC_PER_MSEC);
+    dispatch_source_set_timer(timer, dispatch_time(DISPATCH_TIME_NOW, 1 * NSEC_PER_SEC), 2 * NSEC_PER_SEC, 250 * NSEC_PER_MSEC);
     dispatch_source_set_event_handler(timer, ^{
         InstallSaveButton();
+        TikTokPlusInstallMuteButton();
         if (gAdBlockEnabled) { UIWindow *w = TopWindow(); if (w && w.rootViewController.view) ScanForAds(w.rootViewController.view); }
     });
     dispatch_resume(timer);
