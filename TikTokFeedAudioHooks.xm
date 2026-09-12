@@ -84,6 +84,25 @@ static void FeedCapture(id self, SEL sel, id value){
     }
 }
 
+/* Dedicated hooks requested for TikTok's feed/audio/model path. */
+static void FeedControllerSetVolume(id self, SEL sel, float volume){
+    IMP o=FeedOriginal(self,sel);
+    if(o)((void(*)(id,SEL,float))o)(self,sel,0.0f);
+}
+
+static void FeedMusicSetVolume(id self, SEL sel, float volume){
+    IMP o=FeedOriginal(self,sel);
+    if(o)((void(*)(id,SEL,float))o)(self,sel,0.0f);
+}
+
+static BOOL FeedMusicIsPlaying(id self, SEL sel){
+    return NO;
+}
+
+static BOOL FeedModelIsMuted(id self, SEL sel){
+    return YES;
+}
+
 static void FeedInstall(Class cls, SEL sel, IMP replacement){
     if(!cls||!replacement)return;
     Method m=class_getInstanceMethod(cls,sel);
@@ -130,11 +149,25 @@ static void FeedInstallClass(Class cls){
     dispatch_source_set_timer(timer,dispatch_time(DISPATCH_TIME_NOW,NSEC_PER_SEC),NSEC_PER_SEC,100*NSEC_PER_MSEC);
     dispatch_source_set_event_handler(timer,^{
         if(!FeedIsTikTok())return;
+
+        /* Existing player/controller paths. */
         FeedInstallClass(NSClassFromString(@"AWEAVPlayerWrapper"));
         FeedInstallClass(NSClassFromString(@"AWEAwemeDisplayPlayerController"));
         FeedInstallClass(NSClassFromString(@"AWEAwemePlayMediaPlayerControllerLegacy"));
         FeedInstallClass(NSClassFromString(@"AWEPlayVideoPlayerController"));
         FeedInstallClass(NSClassFromString(@"AWEFeedCellViewController"));
+
+        /* Explicit feed/audio/model hooks requested for this build. */
+        Class feedController=NSClassFromString(@"AWEFeedTableViewController");
+        FeedInstall(feedController,@selector(setVolume:),(IMP)FeedControllerSetVolume);
+
+        Class musicPlayer=NSClassFromString(@"AWEMusicPlayer");
+        FeedInstall(musicPlayer,@selector(setVolume:),(IMP)FeedMusicSetVolume);
+        FeedInstall(musicPlayer,@selector(isPlaying),(IMP)FeedMusicIsPlaying);
+
+        Class awemeModel=NSClassFromString(@"AWEAwemeModel");
+        FeedInstall(awemeModel,@selector(isMuted),(IMP)FeedModelIsMuted);
+
         TikTokPlusInstallMuteButton();
     });
     dispatch_resume(timer);
