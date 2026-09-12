@@ -8,7 +8,7 @@
 void TikTokPlusInstallMuteButton(void);
 static void PTApplyCurrent(void);
 static void PTRestoreCurrent(void);
-static BOOL gPrivateTikTokMuted=NO;
+static BOOL gPrivateTikTokMuted=YES;
 static __weak id gCurrentFeedCell;
 static __weak id gCurrentPlayerController;
 static __weak id gCurrentPlayer;

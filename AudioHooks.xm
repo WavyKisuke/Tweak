@@ -2,7 +2,7 @@
 #import <AVFoundation/AVFoundation.h>
 #import <objc/runtime.h>
 
-static BOOL gTikTokMuted=NO;
+static BOOL gTikTokMuted=YES;
 static UIButton *gMuteButton;
 static UIWindow *gMuteWindow;
 static id gAudioTarget;
