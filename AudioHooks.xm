@@ -26,17 +26,17 @@ static IMP AVOriginal(id self,SEL sel){
     return NULL;
 }
 
+/* Keep TikTok's audio session mixable so background audio is not interrupted. */
 static void EnsureBackgroundMusicMixing(void){
     if(!IsTikTok()) return;
     AVAudioSession *s=AVAudioSession.sharedInstance;
     AVAudioSessionCategoryOptions o=s.categoryOptions;
-    if(o&AVAudioSessionCategoryOptionMixWithOthers) return;
     NSString *c=s.category;
     if(!c.length) return;
-    NSError *e=nil;
-    BOOL ok=[s setCategory:c mode:s.mode options:o|AVAudioSessionCategoryOptionMixWithOthers error:&e];
-    if(!ok && [c isEqualToString:AVAudioSessionCategorySoloAmbient])
-        [s setCategory:AVAudioSessionCategoryAmbient mode:s.mode options:o|AVAudioSessionCategoryOptionMixWithOthers error:nil];
+    AVAudioSessionCategoryOptions desired=o|AVAudioSessionCategoryOptionMixWithOthers;
+    if((o&AVAudioSessionCategoryOptionMixWithOthers)==0){
+        [s setCategory:c mode:s.mode options:desired error:nil];
+    }
 }
 
 static void ForceMuteObject(id o){
