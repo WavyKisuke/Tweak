@@ -13,20 +13,19 @@ static NSHashTable *gPlayers;
 static NSHashTable *gAudioObjects;
 static NSMapTable *gBaseVolumes;
 static NSMutableDictionary *gAVOriginals;
-
-static BOOL IsTikTok(void){NSString *b=NSBundle.mainBundle.bundleIdentifier.lowercaseString;return [b containsString:@"musically"]||[b containsString:@"tiktok"];}
-static NSString *AVKey(Class c,SEL s){return [NSString stringWithFormat:@"%p:%@",c,NSStringFromSelector(s)];}
+static BOOL IsTikTok(void){NSString*b=NSBundle.mainBundle.bundleIdentifier.lowercaseString;return [b containsString:@"musically"]||[b containsString:@"tiktok"];}
+static NSString*AVKey(Class c,SEL s){return [NSString stringWithFormat:@"%p:%@",c,NSStringFromSelector(s)];}
 static IMP AVOriginal(id self,SEL sel){Class c=object_getClass(self);while(c){NSValue*v=gAVOriginals[AVKey(c,sel)];if(v){IMP p=NULL;[v getValue:&p];return p;}c=class_getSuperclass(c);}return NULL;}
 static void EnsureBackgroundMusicMixing(void){if(!IsTikTok())return;AVAudioSession*s=AVAudioSession.sharedInstance;NSString*cat=s.category;if(!cat.length)cat=AVAudioSessionCategoryPlayback;[s setCategory:cat mode:s.mode options:s.categoryOptions|AVAudioSessionCategoryOptionMixWithOthers error:nil];}
-static void ForceMuteObject(id o){if(!o||!gTikTokMuted)return;if([o respondsToSelector:@selector(setMuted:)])[o setMuted:YES];if([o respondsToSelector:@selector(setVolume:)])[o setVolume:0.0f];if([o respondsToSelector:@selector(setOutputVolume:)])[o setOutputVolume:0.0f];}
+static void ForceMuteObject(id o){if(!o||!gTikTokMuted)return;if([o respondsToSelector:@selector(setMuted:)])[o setMuted:YES];if([o respondsToSelector:@selector(setVolume:)])[o setVolume:0];if([o respondsToSelector:@selector(setOutputVolume:)])[o setOutputVolume:0];}
 static void RestoreAudioObject(id o){if(!o||gTikTokMuted)return;if([o respondsToSelector:@selector(setMuted:)])[o setMuted:NO];NSNumber*base=[gBaseVolumes objectForKey:o];if(base){float v=base.floatValue*gTikTokVolume;IMP a=AVOriginal(o,@selector(setVolume:));if(a)((void(*)(id,SEL,float))a)(o,@selector(setVolume:),v);IMP b=AVOriginal(o,@selector(setOutputVolume:));if(b)((void(*)(id,SEL,float))b)(o,@selector(setOutputVolume:),v);}}
 static void ApplyMuteState(void){for(id o in gPlayers.allObjects){if(gTikTokMuted)ForceMuteObject(o);else RestoreAudioObject(o);}for(id o in gAudioObjects.allObjects){if(gTikTokMuted)ForceMuteObject(o);else RestoreAudioObject(o);}}
-static void UpdateVolumeUI(void){dispatch_async(dispatch_get_main_queue(),^{NSInteger pct=(NSInteger)lrintf(gTikTokVolume*100.0f);[gMuteButton setTitle:gTikTokMuted?@"🔇  MUTED":@"🔊  TIKTOK" forState:UIControlStateNormal];gVolumeSlider.value=gTikTokVolume;gVolumeLabel.text=[NSString stringWithFormat:@"TikTok volume: %ld%%",(long)pct];});}
-void TikTokPlusSetMuted(BOOL muted){if(!IsTikTok())return;if(muted){gTikTokMuted=YES;gTikTokVolume=0.0f;}else{if(gTikTokVolume<=0.001f)gTikTokVolume=1.0f;gTikTokMuted=NO;}EnsureBackgroundMusicMixing();ApplyMuteState();UpdateVolumeUI();[[NSNotificationCenter defaultCenter]postNotificationName:@"TikTokPlusMuteChanged" object:nil userInfo:@{@"muted":@(gTikTokMuted),@"volume":@(gTikTokVolume)}];}
-static void SetTikTokVolume(float volume){if(!IsTikTok())return;gTikTokVolume=MAX(0.0f,MIN(1.0f,volume));gTikTokMuted=(gTikTokVolume<=0.001f);ApplyMuteState();EnsureBackgroundMusicMixing();UpdateVolumeUI();[[NSNotificationCenter defaultCenter]postNotificationName:@"TikTokPlusMuteChanged" object:nil userInfo:@{@"muted":@(gTikTokMuted),@"volume":@(gTikTokVolume)}];}
-@interface TTKPlusAudioTarget:NSObject @end
+static void UpdateVolumeUI(void){dispatch_async(dispatch_get_main_queue(),^{NSInteger pct=(NSInteger)lrintf(gTikTokVolume*100);[gMuteButton setTitle:gTikTokMuted?@"🔇  MUTED":@"🔊  TIKTOK" forState:UIControlStateNormal];gVolumeSlider.value=gTikTokVolume;gVolumeLabel.text=[NSString stringWithFormat:@"TikTok volume: %ld%%",(long)pct];});}
+void TikTokPlusSetMuted(BOOL muted){if(!IsTikTok())return;if(muted){gTikTokMuted=YES;gTikTokVolume=0;}else{if(gTikTokVolume<=.001)gTikTokVolume=1;gTikTokMuted=NO;}EnsureBackgroundMusicMixing();ApplyMuteState();UpdateVolumeUI();[[NSNotificationCenter defaultCenter]postNotificationName:@"TikTokPlusMuteChanged" object:nil userInfo:@{@"muted":@(gTikTokMuted),@"volume":@(gTikTokVolume)}];}
+static void SetTikTokVolume(float volume){if(!IsTikTok())return;gTikTokVolume=MAX(0,MIN(1,volume));gTikTokMuted=(gTikTokVolume<=.001);ApplyMuteState();EnsureBackgroundMusicMixing();UpdateVolumeUI();[[NSNotificationCenter defaultCenter]postNotificationName:@"TikTokPlusMuteChanged" object:nil userInfo:@{@"muted":@(gTikTokMuted),@"volume":@(gTikTokVolume)}];}
+@interface TTKPlusAudioTarget:NSObject@end
 @implementation TTKPlusAudioTarget
--(void)tapMute:(id)sender{TikTokPlusSetMuted(!gTikTokMuted);if(gVolumePanel)gVolumePanel.hidden=NO;UpdateVolumeUI;}
+-(void)tapMute:(id)sender{TikTokPlusSetMuted(!gTikTokMuted);if(gVolumePanel)gVolumePanel.hidden=NO;UpdateVolumeUI();}
 -(void)sliderChanged:(UISlider*)sender{SetTikTokVolume(sender.value);}
 -(void)closeVolumePanel:(id)sender{gVolumePanel.hidden=YES;}
 -(void)muteFromPanel:(id)sender{TikTokPlusSetMuted(YES);}
