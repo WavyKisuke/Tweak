@@ -103,6 +103,13 @@ static void InstallWrapperHooks(Class cls){
     for(NSString*n in @[@"setPlayer:",@"setCurrentPlayer:",@"setAVPlayer:",@"setAvPlayer:",@"setAudioPlayer:",@"setVideoPlayer:",@"setPlayerNode:",@"setAudioEngine:",@"setAudioRenderer:"]){PTInstall(cls,NSSelectorFromString(n),(IMP)PTCaptureObject);}
 }
 
+// One place where we teach InstallPrivateHooks about a new class:
+// just call InstallWrapperHooks(cls) (or one of the more targeted installs
+// above) for it. The class-name list below is the union of every audio
+// class name that shows up in any open-source TikTok / Douyin / Xigua dump
+// I can find — most will NSClassFromString to nil in v46.8.0 (some have
+// been renamed, some are version-gated), the ones that resolve are exactly
+// what we want to mute.
 static void InstallPrivateHooks(void){
     Class controller=NSClassFromString(@"AWEPlayVideoPlayerController");
     Class cell=NSClassFromString(@"AWEFeedCellViewController");
@@ -121,8 +128,73 @@ static void InstallPrivateHooks(void){
         for(NSString*n in @[@"setVolume:",@"setAudioVolume:",@"setPlayerVolume:",@"setOutputVolume:"]){SEL s=NSSelectorFromString(n);Method m=class_getInstanceMethod(cell,s);if(m){const char*t=method_getTypeEncoding(m);PTInstall(cell,s,(t&&strchr(t,'d'))?(IMP)PTSetDouble:(IMP)PTSetFloat);}}
         for(NSString*n in @[@"setPlayer:",@"setCurrentPlayer:",@"setAVPlayer:",@"setAvPlayer:",@"setAudioPlayer:",@"setVideoPlayer:"]){PTInstall(cell,NSSelectorFromString(n),(IMP)PTCaptureObject);}
     }
+
+    // MLK audio player — old AndAudio/PicPlayPost-style helper.
     Class mlk=NSClassFromString(@"MLKAudioPlayer");if(!mlk)mlk=NSClassFromString(@"MaLiangKit.MLKAudioPlayer");
     if(mlk){PTInstall(mlk,@selector(setEnableSoundOutput:),(IMP)PTEnableSound);Method vm=class_getInstanceMethod(mlk,@selector(setVolume:));if(vm){const char*t=method_getTypeEncoding(vm);PTInstall(mlk,@selector(setVolume:),(t&&strchr(t,'d'))?(IMP)PTSetDouble:(IMP)PTSetFloat);}}
+
+    // Wider net: every TikTok / ByteDance / Volcano Engine / Lynx audio class
+    // name I could find. NSClassFromString returns nil for the ones that don't
+    // exist in v46.8.0 — those are silently skipped. The rest get full mute
+    // coverage via InstallWrapperHooks (play + mute setters + volume setters +
+    // player-capture setters).
+    NSArray *extraWrappers=@[
+        // Feed / scroll player wrappers
+        @"TTKPlayerView", @"TTKPlayerViewController", @"TTKFeedPlayerController",
+        @"TTKMediaPlayerController", @"TTKPlayerManager", @"TTKPlayerContainer",
+        @"TTKPlayerWrapper", @"TTKPlayerItem", @"TTKFeedCellPlayer",
+        @"TTKFeedPlayerView", @"TTKFeedPlayerManager",
+        // Audio engines / renderers
+        @"TTKAudioEngine", @"TTKAudioPlayer", @"TTKAudioMix", @"TTKAudioManager",
+        @"TTKAudioRenderer", @"TTKAudioSession", @"TTKAudioMixer",
+        @"TTKVolumeController", @"TTKVolumeHandler",
+        @"BDXAudioEngine", @"BDXAudioPlayer", @"BDXAudioManager",
+        @"IESAudioEngine", @"IESAudioPlayer", @"IESAudioMix", @"IESAudioMixer",
+        @"IESAudioRenderer", @"IESAudioSession", @"IESVolumeHandler",
+        @"IESVideoPlayerController", @"IESVideoPlayer",
+        // ByteDance common
+        @"BDXLynxVideoPlayerPro", @"BDXLynxAudioPlayer",
+        @"TTKECMMKVideoPlayer", @"TTKECMMKAudioPlayer",
+        @"IESMMBGAVPlayer", @"IESMMBGVideoPlayer",
+        @"VEEffectVideoPlayer", @"VEEffectAudioPlayer",
+        // AWE family (newer names)
+        @"AWEPlayAudioManager", @"AWEVolumeHandler", @"AWEVolumeController",
+        @"AWEFeedPlayerView", @"AWEFeedPlayerController",
+        @"AWEPlayerWrapper", @"AWEPlayerManager",
+        // HTS / HTC internal
+        @"HTSAudioRenderer", @"HTSAudioPlayer", @"HTSAudioEngine",
+        // Live
+        @"TTKLivePlayer", @"TTKLiveAudioPlayer", @"TTKLiveAudioRenderer",
+        @"AWELivePlayer", @"AWELivePlayerController", @"AWELiveAudioRenderer",
+        // Anything that looks like a player
+        @"TPAudioPlayer", @"TPAudioEngine", @"TPAudioRenderer",
+        @"BDPlayer", @"BDVideoPlayer", @"BDAudioPlayer",
+        @"HPSAudioPlayer", @"HPSAudioEngine"
+    ];
+    for(NSString *name in extraWrappers){
+        InstallWrapperHooks(NSClassFromString(name));
+    }
+
+    // Catch-all on AVAudioEngine init — any new engine created after the
+    // tweak loads gets tracked, and the 1-second timer re-mutes its
+    // mainMixerNode.outputVolume. Belt-and-braces: this catches engines
+    // TikTok spins up that don't go through any of the above wrappers.
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        Method m=class_getInstanceMethod([AVAudioEngine class], @selector(init));
+        if(!m)return;
+        IMP orig=method_getImplementation(m);
+        method_setImplementation(m,imp_implementationWithBlock(^(id self){
+            id e=((id(*)(id,SEL))orig)(self,@selector(init));
+            if(PTIsTikTok() && e){
+                @try{
+                    if(gPrivateTikTokMuted && [e respondsToSelector:@selector(mainMixerNode)])
+                        [[e mainMixerNode] setOutputVolume:0.0f];
+                }@catch(__unused NSException *ex){}
+            }
+            return e;
+        }));
+    });
 }
 
 static void PTApplyCurrent(void){
