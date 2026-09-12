@@ -1,5 +1,6 @@
 #import <UIKit/UIKit.h>
 #import <AVFoundation/AVFoundation.h>
+#import <AVFoundation/AVMutableAudioMix.h>
 #import <objc/runtime.h>
 
 static BOOL gTikTokMuted=YES;
@@ -193,6 +194,42 @@ static void InstallAVHooks(void){
     SaveAndHook(NSClassFromString(@"AVSampleBufferAudioRenderer"),@selector(setVolume:),(IMP)TTKSetVolume);
     SaveAndHook(NSClassFromString(@"AVAudioEngine"),@selector(startAndReturnError:),(IMP)TTKEngine);
 }
+
+%hook AVMutableAudioMixInputParameters
+- (void)setVolume:(float)v {
+    if(gTikTokMuted) v=0.0f;
+    %orig(v);
+}
+%end
+
+%hook AVPlayerItem
+- (void)setAudioMix:(AVAudioMix *)mix {
+    if(gTikTokMuted && [mix isKindOfClass:AVMutableAudioMix.class]){
+        AVMutableAudioMix *mm=(AVMutableAudioMix *)mix;
+        for(AVAudioMixInputParameters *p in mm.inputParameters){
+            @try{ [(AVMutableAudioMixInputParameters *)p setVolume:0.0f]; }@catch(__unused NSException *e){}
+        }
+    }
+    %orig(mix);
+}
+%end
+
+%hook AVAudioSession
+- (BOOL)setActive:(BOOL)active withOptions:(AVAudioSessionSetActivationOptions)options error:(NSError **)outError {
+    if(IsTikTok() && gTikTokMuted && active){
+        // Force deactivate so any audio currently in-flight is silenced, and
+        // notify the music app that the route is free so it resumes cleanly.
+        return %orig(NO, AVAudioSessionSetActivationOptionNotifyOthersOnDeactivation, outError);
+    }
+    return %orig(active, options, outError);
+}
+- (BOOL)setActive:(BOOL)active error:(NSError **)outError {
+    if(IsTikTok() && gTikTokMuted && active){
+        return %orig(NO, outError);
+    }
+    return %orig(active, outError);
+}
+%end
 
 %ctor{
     if(!IsTikTok()) return;
