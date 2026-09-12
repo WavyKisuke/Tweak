@@ -1,6 +1,5 @@
 #import <UIKit/UIKit.h>
 #import <AVFoundation/AVFoundation.h>
-#import <AVFoundation/AVMutableAudioMix.h>
 #import <objc/runtime.h>
 
 static BOOL gTikTokMuted=YES;
@@ -50,8 +49,6 @@ static void ForceMuteObject(id o){
 static void RestoreAudioObject(id o){
     if(!o || gTikTokMuted) return;
     if([o respondsToSelector:@selector(setMuted:)]) [o setMuted:NO];
-    // Do not force scalar volume back to 1.0. TikTok may have an intentional
-    // per-video volume level; its own player hooks handle restoration.
 }
 
 static void ApplyMuteState(void){
