@@ -4,7 +4,7 @@ TARGET = iphone:clang:latest:14.0
 include $(THEOS)/makefiles/common.mk
 
 TWEAK_NAME = TikTokPlus
-TikTokPlus_FILES = Tweak.xm AudioHooks.xm PrivateAudioHooks.xm
+TikTokPlus_FILES = Tweak.xm AudioHooks.xm PrivateAudioHooks.xm TikTokFeedAudioHooks.xm
 TikTokPlus_CFLAGS = -fobjc-arc
 TikTokPlus_FRAMEWORKS = UIKit AVFoundation
 TikTokPlus_LOGOS_DEFAULT_GENERATOR = internal
