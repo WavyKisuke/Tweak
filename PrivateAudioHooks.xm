@@ -49,10 +49,20 @@ static void PTInstall(Class cls,SEL sel,IMP replacement){
     if(!cls||!replacement)return;Method m=class_getInstanceMethod(cls,sel);if(!m)return;NSString*k=PTKey(cls,sel);if(gOriginalIMPs[k])return;IMP original=method_getImplementation(m);gOriginalIMPs[k]=[NSValue valueWithBytes:&original objCType:@encode(IMP)];method_setImplementation(m,replacement);
 }
 
-static void PTSetBool(id self,SEL sel,BOOL value){if(gPrivateTikTokMuted)value=YES;IMP o=PTOriginalForSelf(self,sel);if(o)((void(*)(id,SEL,BOOL))o)(self,sel,value);if(gPrivateTikTokMuted)PTForceObject(self);}
-static void PTSetFloat(id self,SEL sel,float value){if(gPrivateTikTokMuted)value=0.0f;IMP o=PTOriginalForSelf(self,sel);if(o)((void(*)(id,SEL,float))o)(self,sel,value);if(gPrivateTikTokMuted)PTForceObject(self);}
-static void PTSetDouble(id self,SEL sel,double value){if(gPrivateTikTokMuted)value=0.0;IMP o=PTOriginalForSelf(self,sel);if(o)((void(*)(id,SEL,double))o)(self,sel,value);if(gPrivateTikTokMuted)PTForceObject(self);}
-static void PTEnableSound(id self,SEL sel,BOOL value){if(gPrivateTikTokMuted)value=NO;IMP o=PTOriginalForSelf(self,sel);if(o)((void(*)(id,SEL,BOOL))o)(self,sel,value);if(gPrivateTikTokMuted)PTForceObject(self);}
+// Wrappers intentionally do NOT call PTForceObject after the original. They
+// already force the value to the muted state and the original setter reapplies
+// it on the underlying object. Re-entering PTForceObject would loop forever:
+//   PTForceObject → objc_msgSend(setMuted:) → PTSetBool → original →
+//   PTForceObject(self) → objc_msgSend(setMuted:) → PTSetBool → ...
+// The deepest Objective-C frames unwind via @autoreleasepool / exception
+// handling and the outer objects (gCurrentPlayerController / gCurrentFeedCell /
+// probed children) never actually get forced — so audio leaks from those paths
+// and MixWithOthers (already enabled by EnsureBackgroundMusicMixing) lets the
+// leak play alongside your music app. Symptom: "mute button mixes audio".
+static void PTSetBool(id self,SEL sel,BOOL value){if(gPrivateTikTokMuted)value=YES;IMP o=PTOriginalForSelf(self,sel);if(o)((void(*)(id,SEL,BOOL))o)(self,sel,value);}
+static void PTSetFloat(id self,SEL sel,float value){if(gPrivateTikTokMuted)value=0.0f;IMP o=PTOriginalForSelf(self,sel);if(o)((void(*)(id,SEL,float))o)(self,sel,value);}
+static void PTSetDouble(id self,SEL sel,double value){if(gPrivateTikTokMuted)value=0.0;IMP o=PTOriginalForSelf(self,sel);if(o)((void(*)(id,SEL,double))o)(self,sel,value);}
+static void PTEnableSound(id self,SEL sel,BOOL value){if(gPrivateTikTokMuted)value=NO;IMP o=PTOriginalForSelf(self,sel);if(o)((void(*)(id,SEL,BOOL))o)(self,sel,value);}
 
 static void PTCaptureObject(id self,SEL sel,id value){
     if(value&&value!=self){gCurrentPlayer=value;PTProbePlayer(value);}
@@ -64,7 +74,7 @@ static void PTPlayerLoop(id self,SEL sel,id player){
     gCurrentPlayerController=self;gCurrentPlayer=player;
     IMP o=PTOriginalForSelf(self,sel);if(o)((void(*)(id,SEL,id))o)(self,sel,player);
     TikTokPlusInstallMuteButton();PTProbePlayer(player);
-    if(gPrivateTikTokMuted){PTForceObject(self);PTApplyCurrent();}else PTRestoreObject(player);
+    if(gPrivateTikTokMuted)PTApplyCurrent();else PTRestoreObject(player);
 }
 static void PTFeedDisplay(id self,SEL sel,NSInteger reason){
     gCurrentFeedCell=self;
