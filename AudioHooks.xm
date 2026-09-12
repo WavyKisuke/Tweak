@@ -172,7 +172,7 @@ static void TTKEngine(id self,SEL sel,NSError **e){
         [[self mainMixerNode]setOutputVolume:0.0f];
 }
 
-/* Keep the system AV player silent while allowing other/injected audio to remain separate. */
+/* Keep the underlying system video player's own audio silent. */
 static void TTKAVPlayerItemSetAudioMix(id self,SEL sel,AVAudioMix *mix){
     IMP o=AVOriginal(self,sel);
     if(o)((void(*)(id,SEL,AVAudioMix *))o)(self,sel,nil);
@@ -183,8 +183,7 @@ static NSArray *TTKAVPlayerItemTracks(id self,SEL sel){
     NSArray *tracks=o?((NSArray *(*)(id,SEL))o)(self,sel):nil;
     if(!tracks) return tracks;
     for(AVPlayerItemTrack *track in tracks){
-        AVAssetTrack *assetTrack=track.assetTrack;
-        if(assetTrack && [assetTrack.mediaType isEqualToString:AVMediaTypeAudio])
+        if(track.assetTrack && [track.assetTrack.mediaType isEqualToString:AVMediaTypeAudio])
             track.enabled=NO;
     }
     return tracks;
