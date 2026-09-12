@@ -27,5 +27,16 @@ cp packages/*.deb dist/ 2>/dev/null || true
 test -s dist/TikTokPlus.dylib
 test -s dist/TikTokPlus.plist
 
+# Validate the files that will actually be installed.
+file dist/TikTokPlus.dylib
+lipo -info dist/TikTokPlus.dylib
+plutil -lint dist/TikTokPlus.plist
+
+# The tweak is intentionally arm64-only for the current iOS target.
+lipo -info dist/TikTokPlus.dylib | grep -q 'arm64' || {
+  echo "ERROR: built dylib does not contain arm64" >&2
+  exit 1
+}
+
 echo "=== BUILD SUCCESS ==="
 ls -lh dist/
