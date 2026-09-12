@@ -50,12 +50,8 @@ static void ForceMuteObject(id o){
 static void RestoreAudioObject(id o){
     if(!o || gTikTokMuted) return;
     if([o respondsToSelector:@selector(setMuted:)]) [o setMuted:NO];
-    if([o respondsToSelector:@selector(setVolume:)] && [o respondsToSelector:@selector(volume)]) {
-        @try { if([(NSNumber *)[o valueForKey:@"volume"] floatValue] <= 0.001f) [o setVolume:1.0f]; } @catch(__unused NSException *e) {}
-    }
-    if([o respondsToSelector:@selector(setOutputVolume:)] && [o respondsToSelector:@selector(outputVolume)]) {
-        @try { if([(NSNumber *)[o valueForKey:@"outputVolume"] floatValue] <= 0.001f) [o setOutputVolume:1.0f]; } @catch(__unused NSException *e) {}
-    }
+    // Do not force scalar volume back to 1.0. TikTok may have an intentional
+    // per-video volume level; its own player hooks handle restoration.
 }
 
 static void ApplyMuteState(void){
@@ -211,23 +207,6 @@ static void InstallAVHooks(void){
         }
     }
     %orig(mix);
-}
-%end
-
-%hook AVAudioSession
-- (BOOL)setActive:(BOOL)active withOptions:(AVAudioSessionSetActivationOptions)options error:(NSError **)outError {
-    if(IsTikTok() && gTikTokMuted && active){
-        // Force deactivate so any audio currently in-flight is silenced, and
-        // notify the music app that the route is free so it resumes cleanly.
-        return %orig(NO, AVAudioSessionSetActivationOptionNotifyOthersOnDeactivation, outError);
-    }
-    return %orig(active, options, outError);
-}
-- (BOOL)setActive:(BOOL)active error:(NSError **)outError {
-    if(IsTikTok() && gTikTokMuted && active){
-        return %orig(NO, outError);
-    }
-    return %orig(active, outError);
 }
 %end
 
