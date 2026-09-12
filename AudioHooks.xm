@@ -172,6 +172,30 @@ static void TTKEngine(id self,SEL sel,NSError **e){
         [[self mainMixerNode]setOutputVolume:0.0f];
 }
 
+/* Keep the system AV player silent while allowing other/injected audio to remain separate. */
+static void TTKAVPlayerItemSetAudioMix(id self,SEL sel,AVAudioMix *mix){
+    IMP o=AVOriginal(self,sel);
+    if(o)((void(*)(id,SEL,AVAudioMix *))o)(self,sel,nil);
+}
+
+static NSArray *TTKAVPlayerItemTracks(id self,SEL sel){
+    IMP o=AVOriginal(self,sel);
+    NSArray *tracks=o?((NSArray *(*)(id,SEL))o)(self,sel):nil;
+    if(!tracks) return tracks;
+    for(AVPlayerItemTrack *track in tracks){
+        AVAssetTrack *assetTrack=track.assetTrack;
+        if(assetTrack && [assetTrack.mediaType isEqualToString:AVMediaTypeAudio])
+            track.enabled=NO;
+    }
+    return tracks;
+}
+
+static void InstallAVPlayerItemHooks(void){
+    Class c=NSClassFromString(@"AVPlayerItem");
+    SaveAndHook(c,@selector(setAudioMix:),(IMP)TTKAVPlayerItemSetAudioMix);
+    SaveAndHook(c,@selector(tracks),(IMP)TTKAVPlayerItemTracks);
+}
+
 static void InstallAVHooks(void){
     SaveAndHook(NSClassFromString(@"AVPlayer"),@selector(play),(IMP)TTKPlay);
     SaveAndHook(NSClassFromString(@"AVPlayer"),@selector(setMuted:),(IMP)TTKSetMuted);
@@ -186,24 +210,13 @@ static void InstallAVHooks(void){
     SaveAndHook(NSClassFromString(@"AVSampleBufferAudioRenderer"),@selector(setMuted:),(IMP)TTKSetMuted);
     SaveAndHook(NSClassFromString(@"AVSampleBufferAudioRenderer"),@selector(setVolume:),(IMP)TTKSetVolume);
     SaveAndHook(NSClassFromString(@"AVAudioEngine"),@selector(startAndReturnError:),(IMP)TTKEngine);
+    InstallAVPlayerItemHooks();
 }
 
 %hook AVMutableAudioMixInputParameters
 - (void)setVolume:(float)v {
     if(gTikTokMuted) v=0.0f;
     %orig(v);
-}
-%end
-
-%hook AVPlayerItem
-- (void)setAudioMix:(AVAudioMix *)mix {
-    if(gTikTokMuted && [mix isKindOfClass:AVMutableAudioMix.class]){
-        AVMutableAudioMix *mm=(AVMutableAudioMix *)mix;
-        for(AVAudioMixInputParameters *p in mm.inputParameters){
-            @try{ [(AVMutableAudioMixInputParameters *)p setVolume:0.0f]; }@catch(__unused NSException *e){}
-        }
-    }
-    %orig(mix);
 }
 %end
 
