@@ -10,3 +10,5 @@ TikTokPlus_FRAMEWORKS = UIKit AVFoundation
 TikTokPlus_LOGOS_DEFAULT_GENERATOR = internal
 
 include $(THEOS_MAKE_PATH)/tweak.mk
+
+# Rebuild trigger: use the current fixed AudioHooks source on main.
