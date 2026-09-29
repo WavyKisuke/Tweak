@@ -1,10 +1,10 @@
-name: Build TikTokPlus tweak
+name: Build TikTokPlus + YouTubeAudioMix tweaks
 
 on:
   workflow_dispatch:
   push:
     branches:
-      - main
+      - '**'
 
 permissions:
   contents: read
@@ -82,12 +82,14 @@ jobs:
           set -euo pipefail
           test -s dist/TikTokPlus.dylib
           test -s dist/TikTokPlus.plist
+          test -s dist/YouTubeAudioMix.dylib
+          test -s dist/YouTubeAudioMix.plist
           ls -lh dist/
 
       - name: Upload build
         uses: actions/upload-artifact@v4
         with:
-          name: TikTokPlus-build
+          name: TikTokPlus-YouTubeAudioMix-build
           path: dist/
           if-no-files-found: error
           retention-days: 14
