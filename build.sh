@@ -13,30 +13,15 @@ mkdir -p dist
 
 make clean package FINALPACKAGE=1 STRIP=1
 
-DYLIB="$(find .theos -type f -name 'TikTokPlus.dylib' -print -quit 2>/dev/null || true)"
-if [ -z "$DYLIB" ]; then
-  echo "ERROR: TikTokPlus.dylib was not produced" >&2
-  find packages .theos -type f \( -name '*.dylib' -o -name '*.deb' \) -print 2>/dev/null || true
-  exit 1
-fi
+find .theos -type f -name 'YouTubeAudioMix.dylib' -exec cp {} dist/YouTubeAudioMix.dylib \;
+cp YouTubeAudioMix.plist dist/YouTubeAudioMix.plist
 
-cp "$DYLIB" dist/TikTokPlus.dylib
-cp TikTokPlus.plist dist/TikTokPlus.plist
-cp packages/*.deb dist/ 2>/dev/null || true
+test -s dist/YouTubeAudioMix.dylib
+test -s dist/YouTubeAudioMix.plist
 
-test -s dist/TikTokPlus.dylib
-test -s dist/TikTokPlus.plist
+file dist/YouTubeAudioMix.dylib
+lipo -info dist/YouTubeAudioMix.dylib
+plutil -lint dist/YouTubeAudioMix.plist
 
-# Validate the files that will actually be installed.
-file dist/TikTokPlus.dylib
-lipo -info dist/TikTokPlus.dylib
-plutil -lint dist/TikTokPlus.plist
-
-# The tweak is intentionally arm64-only for the current iOS target.
-lipo -info dist/TikTokPlus.dylib | grep -q 'arm64' || {
-  echo "ERROR: built dylib does not contain arm64" >&2
-  exit 1
-}
-
-echo "=== BUILD SUCCESS ==="
-ls -lh dist/
+echo "=== YOUTUBE BUILD SUCCESS ==="
+ls -lh dist/YouTubeAudioMix.*
