@@ -21,7 +21,12 @@ test -s dist/YouTubeAudioMix.plist
 
 file dist/YouTubeAudioMix.dylib
 lipo -info dist/YouTubeAudioMix.dylib
-plutil -lint dist/YouTubeAudioMix.plist
+python3 - <<'PY'
+import plistlib
+with open('dist/YouTubeAudioMix.plist','rb') as fp:
+    plistlib.load(fp)
+print('YouTubeAudioMix.plist: valid plist')
+PY
 
 echo "=== YOUTUBE BUILD SUCCESS ==="
 ls -lh dist/YouTubeAudioMix.*
