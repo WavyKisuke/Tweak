@@ -9,6 +9,10 @@ TikTokPlus_CFLAGS = -fobjc-arc
 TikTokPlus_FRAMEWORKS = UIKit AVFoundation
 TikTokPlus_LOGOS_DEFAULT_GENERATOR = internal
 
-include $(THEOS_MAKE_PATH)/tweak.mk
+TWEAK_NAME += YouTubeAudioMix
+YouTubeAudioMix_FILES = YouTubeAudioMix.xm
+YouTubeAudioMix_CFLAGS = -fobjc-arc
+YouTubeAudioMix_FRAMEWORKS = Foundation AVFoundation
+YouTubeAudioMix_LOGOS_DEFAULT_GENERATOR = internal
 
-# Rebuild trigger: use the current fixed AudioHooks source on main.
+include $(THEOS_MAKE_PATH)/tweak.mk
