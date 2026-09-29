@@ -1,20 +1,25 @@
 #import <Foundation/Foundation.h>
 #import <AVFoundation/AVFoundation.h>
-#import <objc/runtime.h>
 
 static BOOL YTIsTarget(void) {
     NSString *bid = NSBundle.mainBundle.bundleIdentifier.lowercaseString;
-    return [bid isEqualToString:@"com.google.ios.youtube"];
+    return [bid isEqualToString:@"com.google.ios.youtube"] ||
+           [bid hasPrefix:@"com.google.ios.youtube"];
 }
 
-static BOOL YTIsOtherAudioPlaying(void) {
-    @try { return AVAudioSession.sharedInstance.isOtherAudioPlaying; }
-    @catch (__unused NSException *e) { return NO; }
-}
+/*
+ * Do not depend on isOtherAudioPlaying here.
+ * YouTube can configure its session before iOS reports that another
+ * application is currently playing. The MixWithOthers option is safe
+ * to request on the playback categories we care about and is the key
+ * part of allowing existing audio to continue.
+ */
+static AVAudioSessionCategoryOptions YTForceMix(AVAudioSessionCategoryOptions options) {
+    if (!YTIsTarget()) return options;
 
-static AVAudioSessionCategoryOptions YTMix(AVAudioSessionCategoryOptions options) {
-    if (!YTIsTarget() || !YTIsOtherAudioPlaying()) return options;
-    return options | AVAudioSessionCategoryOptionMixWithOthers;
+    options |= AVAudioSessionCategoryOptionMixWithOthers;
+    options &= ~AVAudioSessionCategoryOptionDuckOthers;
+    return options;
 }
 
 %hook AVAudioSession
@@ -22,45 +27,47 @@ static AVAudioSessionCategoryOptions YTMix(AVAudioSessionCategoryOptions options
 - (BOOL)setCategory:(AVAudioSessionCategory)category
        withOptions:(AVAudioSessionCategoryOptions)options
              error:(NSError **)error {
-    if (YTIsTarget() && YTIsOtherAudioPlaying() &&
-        [category isEqualToString:AVAudioSessionCategorySoloAmbient]) {
-        category = AVAudioSessionCategoryAmbient;
+    if (YTIsTarget()) {
+        options = YTForceMix(options);
+
+        // SoloAmbient cannot mix with other application audio.
+        if ([category isEqualToString:AVAudioSessionCategorySoloAmbient]) {
+            category = AVAudioSessionCategoryAmbient;
+        }
     }
-    return %orig(category, YTMix(options), error);
+
+    return %orig(category, options, error);
 }
 
 - (BOOL)setCategory:(AVAudioSessionCategory)category
                mode:(AVAudioSessionMode)mode
             options:(AVAudioSessionCategoryOptions)options
               error:(NSError **)error {
-    if (YTIsTarget() && YTIsOtherAudioPlaying() &&
-        [category isEqualToString:AVAudioSessionCategorySoloAmbient]) {
-        category = AVAudioSessionCategoryAmbient;
+    if (YTIsTarget()) {
+        options = YTForceMix(options);
+
+        if ([category isEqualToString:AVAudioSessionCategorySoloAmbient]) {
+            category = AVAudioSessionCategoryAmbient;
+        }
     }
-    return %orig(category, mode, YTMix(options), error);
+
+    return %orig(category, mode, options, error);
 }
 
 - (BOOL)setCategory:(AVAudioSessionCategory)category
                mode:(AVAudioSessionMode)mode
-routeSharingPolicy:(AVAudioSessionRouteSharingPolicy)policy
+ routeSharingPolicy:(AVAudioSessionRouteSharingPolicy)policy
             options:(AVAudioSessionCategoryOptions)options
               error:(NSError **)error {
-    if (YTIsTarget() && YTIsOtherAudioPlaying() &&
-        [category isEqualToString:AVAudioSessionCategorySoloAmbient]) {
-        category = AVAudioSessionCategoryAmbient;
+    if (YTIsTarget()) {
+        options = YTForceMix(options);
+
+        if ([category isEqualToString:AVAudioSessionCategorySoloAmbient]) {
+            category = AVAudioSessionCategoryAmbient;
+        }
     }
-    return %orig(category, mode, policy, YTMix(options), error);
-}
 
-- (BOOL)setActive:(BOOL)active
-            error:(NSError **)error {
-    return %orig(active, error);
-}
-
-- (BOOL)setActive:(BOOL)active
-      withOptions:(AVAudioSessionSetActiveOptions)options
-            error:(NSError **)error {
-    return %orig(active, options, error);
+    return %orig(category, mode, policy, options, error);
 }
 
 %end
