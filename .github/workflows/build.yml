@@ -1,4 +1,4 @@
-name: Build TikTokPlus + YouTubeAudioMix tweaks
+name: Build YouTubeAudioMix tweak
 
 on:
   workflow_dispatch:
@@ -76,20 +76,20 @@ jobs:
           chmod +x build.sh
           ./build.sh
 
-      - name: Verify artifacts
+      - name: Verify YouTube artifact
         shell: bash
         run: |
           set -euo pipefail
-          test -s dist/TikTokPlus.dylib
-          test -s dist/TikTokPlus.plist
           test -s dist/YouTubeAudioMix.dylib
           test -s dist/YouTubeAudioMix.plist
-          ls -lh dist/
+          ls -lh dist/YouTubeAudioMix.*
 
-      - name: Upload build
+      - name: Upload YouTube build
         uses: actions/upload-artifact@v4
         with:
-          name: TikTokPlus-YouTubeAudioMix-build
-          path: dist/
+          name: YouTubeAudioMix-LiveContainer
+          path: |
+            dist/YouTubeAudioMix.dylib
+            dist/YouTubeAudioMix.plist
           if-no-files-found: error
           retention-days: 14
